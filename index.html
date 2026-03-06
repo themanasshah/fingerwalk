@@ -1,455 +1,288 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>Dictator City VR</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dystopian Megacity VR</title>
+    <!-- A-Frame 1.6.0 -->
+    <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
-<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+    <script>
+        // CORE LOCOMOTION SYSTEM
+        // Locomotion mechanic based entirely on WebXR hand tracking joints.
+        AFRAME.registerComponent('finger-locomotion', {
+            schema: {
+                speed: { type: 'number', default: 0.18 }, // Fast glide speed as requested
+                threshold: { type: 'number', default: 0.035 }, // Distance threshold to detect extended finger
+                rig: { type: 'selector', default: '#rig' }
+            },
+            
+            init: function() {
+                // Pre-allocate vectors to avoid garbage collection stuttering
+                this.vector = new THREE.Vector3();
+                this.worldVector = new THREE.Vector3();
+                this.proximalPos = new THREE.Vector3();
+                this.tipPos = new THREE.Vector3();
+                this.arrowPos = new THREE.Vector3();
+                this.lookAtPos = new THREE.Vector3();
+                
+                this.arrow = document.querySelector('#movement-arrow');
+            },
 
-<script>
-AFRAME.registerComponent("finger-locomotion",{
+            tick: function() {
+                const sceneEl = this.el;
+                const frame = sceneEl.frame;
+                if (!frame) return;
 
-init:function(){
+                const xr = sceneEl.renderer.xr;
+                const session = xr.getSession();
+                if (!session) return;
 
-this.rig=document.querySelector("#rig")
-this.hand=document.querySelector("#leftHand")
-this.arrow=document.querySelector("#arrow")
+                const refSpace = xr.getReferenceSpace();
+                if (!refSpace) return;
 
-this.speed=0.18
+                // 1. Find the left hand input source
+                let leftHandSource = null;
+                for (let i = 0; i < session.inputSources.length; i++) {
+                    const source = session.inputSources[i];
+                    if (source.handedness === 'left' && source.hand) {
+                        leftHandSource = source;
+                        break;
+                    }
+                }
 
-},
+                if (!leftHandSource) {
+                    this.stopMovement();
+                    return;
+                }
 
-tick:function(){
+                // 2. Get the required joints
+                const proximalJoint = leftHandSource.hand.get('index-finger-phalanx-proximal');
+                const tipJoint = leftHandSource.hand.get('index-finger-tip');
 
-if(!this.hand.components["hand-tracking-controls"]) return
+                if (!proximalJoint || !tipJoint) {
+                    this.stopMovement();
+                    return;
+                }
 
-let mesh=this.hand.components["hand-tracking-controls"].skinnedMesh
-if(!mesh) return
+                // 3. Get joint poses in the local reference space
+                const proximalPose = frame.getJointPose(proximalJoint, refSpace);
+                const tipPose = frame.getJointPose(tipJoint, refSpace);
 
-let bones=mesh.skeleton.bones
+                if (!proximalPose || !tipPose) {
+                    this.stopMovement();
+                    return;
+                }
 
-let tip=bones.find(b=>b.name.includes("index-finger-tip"))
-let mid=bones.find(b=>b.name.includes("index-finger-phalanx-proximal"))
+                // 4. Extract positions
+                this.proximalPos.set(proximalPose.transform.position.x, proximalPose.transform.position.y, proximalPose.transform.position.z);
+                this.tipPos.set(tipPose.transform.position.x, tipPose.transform.position.y, tipPose.transform.position.z);
 
-if(!tip || !mid) return
+                // 5. Check extension threshold to prevent automatic drift
+                const distance = this.proximalPos.distanceTo(this.tipPos);
 
-let tipPos=new THREE.Vector3()
-let midPos=new THREE.Vector3()
+                if (distance > this.data.threshold) {
+                    // Finger is extended -> Calculate direction vector
+                    this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
 
-tip.getWorldPosition(tipPos)
-mid.getWorldPosition(midPos)
+                    // Apply movement to the rig
+                    if (this.data.rig) {
+                        // Transform the local hand vector to world space based on the rig's rotation
+                        this.worldVector.copy(this.vector);
+                        this.worldVector.applyQuaternion(this.data.rig.object3D.quaternion);
+                        this.worldVector.multiplyScalar(this.data.speed);
+                        
+                        // Move the camera rig
+                        this.data.rig.object3D.position.add(this.worldVector);
+                    }
 
-let dir=tipPos.clone().sub(midPos)
-let length=dir.length()
+                    // Update visual feedback (Glowing Arrow)
+                    this.updateArrow(this.tipPos, this.vector);
+                } else {
+                    // Finger is curled/relaxed -> strictly stop movement
+                    this.stopMovement();
+                }
+            },
 
-/* finger must be extended */
-if(length < 0.03){
-this.arrow.setAttribute("visible",false)
-return
-}
+            updateArrow: function(pos, dir) {
+                if (!this.arrow) return;
+                
+                if (!this.arrow.getAttribute('visible')) {
+                    this.arrow.setAttribute('visible', 'true');
+                }
 
-dir.normalize()
+                // Position the arrow slightly ahead of the fingertip
+                this.arrowPos.copy(pos).addScaledVector(dir, 0.15);
+                this.arrow.object3D.position.copy(this.arrowPos);
 
-let rig=this.rig.object3D
+                // Orient the arrow to point in the direction of movement
+                // lookAt makes the local -Z axis point at the target
+                this.lookAtPos.copy(this.arrowPos).add(dir);
+                this.arrow.object3D.lookAt(this.lookAtPos);
+            },
 
-rig.position.x+=dir.x*this.speed
-rig.position.y+=dir.y*this.speed
-rig.position.z+=dir.z*this.speed
+            stopMovement: function() {
+                if (this.arrow && this.arrow.getAttribute('visible')) {
+                    this.arrow.setAttribute('visible', 'false');
+                }
+                // No translation applied to the rig, guaranteeing zero automatic drift
+            }
+        });
 
-this.arrow.object3D.lookAt(
-rig.position.x+dir.x,
-rig.position.y+dir.y,
-rig.position.z+dir.z
-)
+        // PROCEDURAL CITY GENERATION SYSTEM
+        AFRAME.registerComponent('city-generator', {
+            init: function() {
+                const scene = this.el;
 
-this.arrow.setAttribute("visible",true)
+                // 1. Generate Brutalist Megacity Buildings
+                const buildingCount = 140;
+                for (let i = 0; i < buildingCount; i++) {
+                    const box = document.createElement('a-box');
+                    
+                    let x = (Math.random() - 0.5) * 500;
+                    let z = (Math.random() - 0.5) * 500;
+                    
+                    // Keep the central plaza area clear
+                    if (Math.abs(x) < 80 && Math.abs(z - 20) < 80) {
+                        x += x > 0 ? 80 : -80;
+                        z += z > 0 ? 80 : -80;
+                    }
 
-}
+                    const width = 10 + Math.random() * 25;
+                    const depth = 10 + Math.random() * 25;
+                    const height = 10 + Math.random() * 80; // Heights between 10 and 90
 
-})
-</script>
+                    // Color palette: Brutalist metallic dark blue-gray with slight variations
+                    const h = Math.floor(210 + Math.random() * 20); // Hue around 220
+                    const s = Math.floor(10 + Math.random() * 15);  // Low saturation
+                    const l = Math.floor(12 + Math.random() * 12);  // Dark lightness
 
+                    box.setAttribute('position', `${x} ${height / 2} ${z}`);
+                    box.setAttribute('width', width);
+                    box.setAttribute('height', height);
+                    box.setAttribute('depth', depth);
+                    box.setAttribute('color', `hsl(${h}, ${s}%, ${l}%)`);
+                    box.setAttribute('material', 'roughness: 0.8; metalness: 0.3');
+                    
+                    scene.appendChild(box);
+                }
+
+                // 2. Build the Massive Dictator Statue (at Z = -10)
+                const buildStatuePart = (w, h, d, y, z) => {
+                    const part = document.createElement('a-box');
+                    part.setAttribute('width', w);
+                    part.setAttribute('height', h);
+                    part.setAttribute('depth', d);
+                    part.setAttribute('position', `0 ${y} ${z}`);
+                    part.setAttribute('color', '#15181e');
+                    part.setAttribute('material', 'roughness: 0.9; metalness: 0.5');
+                    scene.appendChild(part);
+                };
+                
+                buildStatuePart(16, 6, 16, 3, -10);   // Base
+                buildStatuePart(10, 24, 10, 18, -10); // Body
+                buildStatuePart(18, 6, 8, 30, -10);   // Shoulders
+                buildStatuePart(6, 8, 6, 37, -10);    // Head
+
+                // 3. Generate Soldier Grid (200 soldiers)
+                // Arranged tightly between the statue and the platform
+                for (let row = 0; row < 10; row++) {
+                    for (let col = 0; col < 20; col++) {
+                        const soldier = document.createElement('a-box');
+                        const sx = -19 + col * 2;
+                        const sz = 5 + row * 1.5;
+                        
+                        soldier.setAttribute('position', `${sx} 0.8 ${sz}`);
+                        soldier.setAttribute('width', '0.6');
+                        soldier.setAttribute('height', '1.6');
+                        soldier.setAttribute('depth', '0.6');
+                        soldier.setAttribute('color', '#2a4d25'); // Green colored simple humanoid shape
+                        soldier.setAttribute('material', 'roughness: 0.9');
+                        scene.appendChild(soldier);
+                    }
+                }
+
+                // 4. Generate Random Civilians (180 civilians)
+                let civCount = 0;
+                while (civCount < 180) {
+                    const cx = (Math.random() - 0.5) * 120;
+                    const cz = (Math.random() - 0.5) * 120 + 20;
+                    
+                    // Keep civilians out of the soldier grid zone and off the platform
+                    const inSoldierZone = (cx > -22 && cx < 22 && cz > 2 && cz < 22);
+                    const onPlatform = (cx > -20 && cx < 20 && cz > 18 && cz < 62);
+                    
+                    if (!inSoldierZone && !onPlatform) {
+                        const civilian = document.createElement('a-entity');
+                        civilian.setAttribute('position', `${cx} 0 ${cz}`);
+
+                        // Body
+                        const body = document.createElement('a-cylinder');
+                        body.setAttribute('radius', '0.25');
+                        body.setAttribute('height', '1.3');
+                        body.setAttribute('position', '0 0.65 0');
+                        body.setAttribute('color', '#2b2d35');
+                        
+                        // Head (Peach colored sphere)
+                        const head = document.createElement('a-sphere');
+                        head.setAttribute('radius', '0.2');
+                        head.setAttribute('position', '0 1.5 0');
+                        head.setAttribute('color', '#ffcca8');
+
+                        civilian.appendChild(body);
+                        civilian.appendChild(head);
+                        scene.appendChild(civilian);
+                        
+                        civCount++;
+                    }
+                }
+            }
+        });
+    </script>
 </head>
-
 <body>
-
-<a-scene background="color:#0b1c3a">
-
-<a-light type="ambient" intensity="0.7"></a-light>
-<a-light type="directional" position="5 10 5" color="#ff4444"></a-light>
-
-<a-sky color="#0b1c3a"></a-sky>
-
-<!-- PLAYER -->
-
-<a-entity id="rig" position="0 10 25" finger-locomotion>
-
-<a-camera></a-camera>
-
-<a-cone
-id="arrow"
-radius-bottom="0.15"
-radius-top="0"
-height="0.4"
-color="red"
-position="0 -0.4 -1"
-visible="false">
-</a-cone>
-
-</a-entity>
-
-<!-- LEFT HAND -->
-
-<a-entity
-id="leftHand"
-hand-tracking-controls="hand: left; modelColor: black">
-</a-entity>
-
-<!-- PLATFORM -->
-
-<a-box
-position="0 0 25"
-width="40"
-height="2"
-depth="40"
-color="#222">
-</a-box>
-
-<!-- STATUE -->
-
-<a-cylinder
-position="0 25 -40"
-height="50"
-radius="3"
-color="#111">
-</a-cylinder>
-
-<a-sphere
-position="0 52 -40"
-radius="5"
-color="#111">
-</a-sphere>
-
-<!-- SOLDIERS -->
-
-<a-entity id="soldiers"></a-entity>
-
-<script>
-
-let soldiers=document.querySelector("#soldiers")
-
-for(let i=0;i<10;i++){
-for(let j=0;j<20;j++){
-
-let s=document.createElement("a-box")
-
-s.setAttribute("width",0.5)
-s.setAttribute("height",1.6)
-s.setAttribute("depth",0.5)
-s.setAttribute("color","#1f5b2c")
-
-s.setAttribute("position",(i*1.2-6)+" 0 "+(-j*1.5))
-
-soldiers.appendChild(s)
-
-}
-}
-
-</script>
-
-<!-- CIVILIANS -->
-
-<a-entity id="civilians"></a-entity>
-
-<script>
-
-let civ=document.querySelector("#civilians")
-
-for(let i=0;i<80;i++){
-
-let h=document.createElement("a-sphere")
-
-h.setAttribute("radius",0.25)
-h.setAttribute("color","#f5c6a5")
-
-let x=(Math.random()*60)-30
-let z=(Math.random()*60)-60
-
-h.setAttribute("position",x+" 0.25 "+z)
-
-civ.appendChild(h)
-
-}
-
-</script>
-
-<!-- BUILDINGS WITH COLOR VARIATION -->
-
-<a-entity id="buildings"></a-entity>
-
-<script>
-
-let city=document.querySelector("#buildings")
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Dictator City VR</title>
-
-<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
-
-<script>
-AFRAME.registerComponent("finger-locomotion",{
-
-init:function(){
-
-this.rig=document.querySelector("#rig")
-this.hand=document.querySelector("#leftHand")
-this.arrow=document.querySelector("#arrow")
-
-this.speed=0.18
-
-},
-
-tick:function(){
-
-if(!this.hand.components["hand-tracking-controls"]) return
-
-let mesh=this.hand.components["hand-tracking-controls"].skinnedMesh
-if(!mesh) return
-
-let bones=mesh.skeleton.bones
-
-let tip=bones.find(b=>b.name.includes("index-finger-tip"))
-let mid=bones.find(b=>b.name.includes("index-finger-phalanx-proximal"))
-
-if(!tip || !mid) return
-
-let tipPos=new THREE.Vector3()
-let midPos=new THREE.Vector3()
-
-tip.getWorldPosition(tipPos)
-mid.getWorldPosition(midPos)
-
-let dir=tipPos.clone().sub(midPos)
-let length=dir.length()
-
-/* finger must be extended */
-if(length < 0.03){
-this.arrow.setAttribute("visible",false)
-return
-}
-
-dir.normalize()
-
-let rig=this.rig.object3D
-
-rig.position.x+=dir.x*this.speed
-rig.position.y+=dir.y*this.speed
-rig.position.z+=dir.z*this.speed
-
-this.arrow.object3D.lookAt(
-rig.position.x+dir.x,
-rig.position.y+dir.y,
-rig.position.z+dir.z
-)
-
-this.arrow.setAttribute("visible",true)
-
-}
-
-})
-</script>
-
-</head>
-
-<body>
-
-<a-scene background="color:#0b1c3a">
-
-<a-light type="ambient" intensity="0.7"></a-light>
-<a-light type="directional" position="5 10 5" color="#ff4444"></a-light>
-
-<a-sky color="#0b1c3a"></a-sky>
-
-<!-- PLAYER -->
-
-<a-entity id="rig" position="0 10 25" finger-locomotion>
-
-<a-camera></a-camera>
-
-<a-cone
-id="arrow"
-radius-bottom="0.15"
-radius-top="0"
-height="0.4"
-color="red"
-position="0 -0.4 -1"
-visible="false">
-</a-cone>
-
-</a-entity>
-
-<!-- LEFT HAND -->
-
-<a-entity
-id="leftHand"
-hand-tracking-controls="hand: left; modelColor: black">
-</a-entity>
-
-<!-- PLATFORM -->
-
-<a-box
-position="0 0 25"
-width="40"
-height="2"
-depth="40"
-color="#222">
-</a-box>
-
-<!-- STATUE -->
-
-<a-cylinder
-position="0 25 -40"
-height="50"
-radius="3"
-color="#111">
-</a-cylinder>
-
-<a-sphere
-position="0 52 -40"
-radius="5"
-color="#111">
-</a-sphere>
-
-<!-- SOLDIERS -->
-
-<a-entity id="soldiers"></a-entity>
-
-<script>
-
-let soldiers=document.querySelector("#soldiers")
-
-for(let i=0;i<10;i++){
-for(let j=0;j<20;j++){
-
-let s=document.createElement("a-box")
-
-s.setAttribute("width",0.5)
-s.setAttribute("height",1.6)
-s.setAttribute("depth",0.5)
-s.setAttribute("color","#1f5b2c")
-
-s.setAttribute("position",(i*1.2-6)+" 0 "+(-j*1.5))
-
-soldiers.appendChild(s)
-
-}
-}
-
-</script>
-
-<!-- CIVILIANS -->
-
-<a-entity id="civilians"></a-entity>
-
-<script>
-
-let civ=document.querySelector("#civilians")
-
-for(let i=0;i<80;i++){
-
-let h=document.createElement("a-sphere")
-
-h.setAttribute("radius",0.25)
-h.setAttribute("color","#f5c6a5")
-
-let x=(Math.random()*60)-30
-let z=(Math.random()*60)-60
-
-h.setAttribute("position",x+" 0.25 "+z)
-
-civ.appendChild(h)
-
-}
-
-</script>
-
-<!-- BUILDINGS WITH COLOR VARIATION -->
-
-<a-entity id="buildings"></a-entity>
-
-<script>
-
-let city=document.querySelector("#buildings")
-
-for(let i=0;i<140;i++){
-
-let b=document.createElement("a-box")
-
-let h=10+Math.random()*80
-
-b.setAttribute("height",h)
-b.setAttribute("width",6)
-b.setAttribute("depth",6)
-
-let hueShift=(Math.random()*20)-10
-let lightShift=(Math.random()*20)-10
-
-let baseHue=220+hueShift
-let light=25+lightShift
-
-let color=`hsl(${baseHue},20%,${light}%)`
-
-b.setAttribute("color",color)
-
-let x=(Math.random()*200)-100
-let z=(Math.random()*200)-200
-
-b.setAttribute("position",x+" "+(h/2)+" "+z)
-
-city.appendChild(b)
-
-}
-
-</script>
-
-</a-scene>
-
-</body>
-</html>
-for(let i=0;i<140;i++){
-
-let b=document.createElement("a-box")
-
-let h=10+Math.random()*80
-
-b.setAttribute("height",h)
-b.setAttribute("width",6)
-b.setAttribute("depth",6)
-
-let hueShift=(Math.random()*20)-10
-let lightShift=(Math.random()*20)-10
-
-let baseHue=220+hueShift
-let light=25+lightShift
-
-let color=`hsl(${baseHue},20%,${light}%)`
-
-b.setAttribute("color",color)
-
-let x=(Math.random()*200)-100
-let z=(Math.random()*200)-200
-
-b.setAttribute("position",x+" "+(h/2)+" "+z)
-
-city.appendChild(b)
-
-}
-
-</script>
-
-</a-scene>
-
+    <!-- Main Scene: Applies fog for red atmospheric haze and attaches the locomotion and generator -->
+    <a-scene 
+        finger-locomotion 
+        city-generator 
+        fog="type: exponential; color: #5a1015; density: 0.009"
+        background="color: #050a14">
+        
+        <!-- Environment Lighting (Dawn) -->
+        <a-light type="ambient" color="#1a2035" intensity="0.8"></a-light>
+        <a-light type="directional" color="#ff4422" position="-1 0.2 -1" intensity="1.5"></a-light>
+
+        <!-- The Sky -->
+        <a-sky color="#050a14"></a-sky>
+
+        <!-- Ground Plane -->
+        <a-plane rotation="-90 0 0" width="1000" height="1000" color="#0a0c11" material="roughness: 1; metalness: 0"></a-plane>
+
+        <!-- Dictator Platform (40x40 units, highly elevated) -->
+        <!-- Positioned so that the top surface is at Y=10 -->
+        <a-box position="0 5 40" width="40" height="10" depth="40" color="#1c202a" material="roughness: 0.9; metalness: 0.2"></a-box>
+
+        <!-- PLAYER RIG -->
+        <!-- Placed exactly 10 units above ground, matching the platform's top edge, looking over the crowd -->
+        <a-entity id="rig" position="0 10.1 40">
+            <!-- Camera -->
+            <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false"></a-camera>
+
+            <!-- Left Hand Tracking with Black Glove -->
+            <a-entity hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #050505;"></a-entity>
+
+            <!-- Visual Feedback: Glowing Movement Arrow -->
+            <!-- Invisible by default. Positioned locally relative to the rig, managed by the locomotion script -->
+            <a-entity id="movement-arrow" visible="false">
+                <!-- Arrow Tip (Cone pointing to local -Z) -->
+                <a-cone radius-bottom="0.015" radius-top="0" height="0.06" rotation="-90 0 0" position="0 0 -0.03" 
+                        material="color: #ff2222; shader: flat; transparent: true; opacity: 0.9"></a-cone>
+                <!-- Arrow Shaft (Cylinder pointing to local -Z) -->
+                <a-cylinder radius="0.005" height="0.08" rotation="-90 0 0" position="0 0 0.04" 
+                            material="color: #ff2222; shader: flat; transparent: true; opacity: 0.9"></a-cylinder>
+            </a-entity>
+        </a-entity>
+
+    </a-scene>
 </body>
 </html>
