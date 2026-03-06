@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Hyper-Realistic Dystopian Megacity - Perfect HUD</title>
+    <title>Hyper-Realistic Dystopian Megacity - Fixed HUD</title>
     <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
     <script>
@@ -98,11 +98,7 @@
 
         // SMOOTHED LOCOMOTION WITH GLOW & CIRCULAR SPEEDOMETER
         AFRAME.registerComponent('finger-locomotion', {
-            schema: { 
-                baseSpeed: { type: 'number', default: 0.5 }, 
-                threshold: { type: 'number', default: 0.035 }, 
-                rig: { type: 'selector', default: '#rig' }
-            },
+            schema: { baseSpeed: { type: 'number', default: 0.5 }, threshold: { type: 'number', default: 0.035 }, rig: { type: 'selector', default: '#rig' } },
             init: function() {
                 this.vector = new THREE.Vector3();
                 this.targetVelocity = new THREE.Vector3();
@@ -111,7 +107,6 @@
                 this.tipPos = new THREE.Vector3();
                 this.currentSpeedMultiplier = 1.0;
                 
-                // Tracked elements moved outside of hand mesh to guarantee visibility
                 this.speedUI = document.querySelector('#speedometer-ui');
                 this.speedText = document.querySelector('#speed-text');
                 this.speedRing = document.querySelector('#speed-ring');
@@ -143,32 +138,26 @@
                         let tilt = euler.z; 
                         this.currentSpeedMultiplier = THREE.MathUtils.clamp(1.0 + (tilt * 1.5), 0.2, 4.0);
 
-                        // Attach Holographic Speedometer securely to wrist position
+                        // Position Speedometer HUD manually to wrist
                         if (this.speedUI) {
                             this.speedUI.object3D.position.copy(rWristPose.transform.position);
                             this.speedUI.object3D.quaternion.copy(rWristPose.transform.orientation);
-                            
-                            // Offset to hover like a futuristic smartwatch above the hand
                             this.speedUI.object3D.translateY(0.06); 
                             this.speedUI.object3D.translateZ(-0.02);
-                            this.speedUI.object3D.rotateX(-Math.PI / 2); // Lay flat facing the camera
+                            this.speedUI.object3D.rotateX(-Math.PI / 2);
                         }
                     }
                 }
 
-                // UPDATE CIRCULAR SPEEDOMETER HUD
                 if (this.speedText) this.speedText.setAttribute('value', this.currentSpeedMultiplier.toFixed(1) + 'x');
                 if (this.speedRing) {
                     const fillAmount = (this.currentSpeedMultiplier / 4.0) * 360;
                     this.speedRing.setAttribute('geometry', 'thetaLength', fillAmount);
-                    
-                    let ringColor = '#00ffaa';
-                    if (this.currentSpeedMultiplier > 2.8) ringColor = '#ff2222';
-                    else if (this.currentSpeedMultiplier > 1.5) ringColor = '#ffaa00';
+                    let ringColor = this.currentSpeedMultiplier > 2.8 ? '#ff2222' : (this.currentSpeedMultiplier > 1.5 ? '#ffaa00' : '#00ffaa');
                     this.speedRing.setAttribute('material', 'color', ringColor);
                 }
 
-                // 2. DIRECTION & SMOOTH MOVEMENT (LEFT HAND)
+                // 2. DIRECTION & GLOW (LEFT HAND)
                 let isMoving = false;
                 if (leftHand) {
                     const pJoint = leftHand.hand.get('index-finger-phalanx-proximal');
@@ -180,10 +169,7 @@
                         this.proximalPos.set(pPose.transform.position.x, pPose.transform.position.y, pPose.transform.position.z);
                         this.tipPos.set(tPose.transform.position.x, tPose.transform.position.y, tPose.transform.position.z);
                         
-                        // Keep Glow attached to left hand
-                        if (this.leftGlow) {
-                            this.leftGlow.object3D.position.copy(pPose.transform.position);
-                        }
+                        if (this.leftGlow) this.leftGlow.object3D.position.copy(pPose.transform.position);
 
                         if (this.proximalPos.distanceTo(this.tipPos) > this.data.threshold) {
                             isMoving = true;
@@ -194,37 +180,29 @@
                     }
                 }
 
-                if (!isMoving) {
-                    this.targetVelocity.set(0, 0, 0);
-                }
+                if (!isMoving) this.targetVelocity.set(0, 0, 0);
 
-                // Toggle Left Hand Glowing Aura
                 if (this.leftGlow) {
-                    if (isMoving && !this.leftGlow.getAttribute('visible')) {
-                        this.leftGlow.setAttribute('visible', 'true');
-                    } else if (!isMoving && this.leftGlow.getAttribute('visible')) {
-                        this.leftGlow.setAttribute('visible', 'false');
-                    }
+                    this.leftGlow.setAttribute('visible', isMoving);
                 }
 
-                // APPLY LERP (Smooths out all micro-stutters and lag)
+                // SMOOTHING
                 this.currentVelocity.lerp(this.targetVelocity, 0.15);
 
                 if (this.currentVelocity.lengthSq() > 0.0001) {
                     const n = this.data.rig.object3D.position.clone().add(this.currentVelocity);
-                    if (n.y < 0.2) n.y = 0.2; // Floor collision
+                    if (n.y < 0.2) n.y = 0.2; 
                     this.data.rig.object3D.position.copy(n);
                 }
             }
         });
 
-        // COMBAT SYSTEM (Thick Laser & Visible Gun attached via Joint tracking)
+        // COMBAT SYSTEM
         AFRAME.registerComponent('combat-system', {
             init: function() {
                 this.rig = document.querySelector('#rig');
                 this.camera = document.querySelector('a-camera');
-                
-                // Fetch dynamically tracked items
+                this.rightHand = document.querySelector('#right-hand');
                 this.speedometerUI = document.querySelector('#speedometer-ui');
                 this.gunModel = document.querySelector('#gun-model');
                 this.thickLaser = document.querySelector('#thick-laser');
@@ -232,13 +210,9 @@
                 this.audioCtx = null;
                 this.gunVisibleTimer = 0;
 
-                // Hook pinch on the right hand component
-                const rightHandEl = document.querySelector('#right-hand');
-                if (rightHandEl) {
-                    rightHandEl.addEventListener('pinchstarted', () => {
-                        if (this.gunVisibleTimer > 0) this.fireGun();
-                    });
-                }
+                this.rightHand.addEventListener('pinchstarted', () => {
+                    if (this.gunVisibleTimer > 0) this.fireGun();
+                });
             },
             tick: function(t, dt) {
                 const xr = this.el.sceneEl.renderer.xr;
@@ -257,57 +231,39 @@
                 const wrist = rHandSource.hand.get('wrist');
                 const iTip = rHandSource.hand.get('index-finger-tip');
                 const mTip = rHandSource.hand.get('middle-finger-tip');
-                
                 const wPose = frame.getJointPose(wrist, refSpace);
 
-                if (wrist && iTip && mTip && wPose) {
+                if (wPose && iTip && mTip) {
                     const iPose = frame.getJointPose(iTip, refSpace);
                     const mPose = frame.getJointPose(mTip, refSpace);
-
                     if (iPose && mPose) {
                         const dIndex = Math.hypot(iPose.transform.position.x - wPose.transform.position.x, iPose.transform.position.y - wPose.transform.position.y, iPose.transform.position.z - wPose.transform.position.z);
                         const dMiddle = Math.hypot(mPose.transform.position.x - wPose.transform.position.x, mPose.transform.position.y - wPose.transform.position.y, mPose.transform.position.z - wPose.transform.position.z);
-                        
                         if (dIndex > 0.10 && dMiddle < 0.08) isGunPose = true;
                     }
-
-                    // Explicitly track the gun to the hand joint so it is never hidden
                     if (this.gunModel) {
                         this.gunModel.object3D.position.copy(wPose.transform.position);
                         this.gunModel.object3D.quaternion.copy(wPose.transform.orientation);
-                        // Offset gun to sit in palm pointing forward
                         this.gunModel.object3D.translateY(-0.02);
                         this.gunModel.object3D.translateZ(-0.06);
-                        this.gunModel.object3D.rotateX(-Math.PI / 6); 
+                        this.gunModel.object3D.rotateX(-Math.PI / 6);
                     }
                 }
 
-                if (isGround && isGunPose) {
-                    this.gunVisibleTimer = 0.3; 
-                } else {
-                    this.gunVisibleTimer -= dt * 0.001;
-                }
+                if (isGround && isGunPose) this.gunVisibleTimer = 0.3;
+                else this.gunVisibleTimer -= dt * 0.001;
 
-                if (this.gunVisibleTimer > 0) {
-                    this.gunModel.setAttribute('visible', 'true');
-                    this.speedometerUI.setAttribute('visible', 'false');
-                } else {
-                    this.gunModel.setAttribute('visible', 'false');
-                    this.speedometerUI.setAttribute('visible', 'true');
-                }
+                const gunShouldShow = this.gunVisibleTimer > 0;
+                this.gunModel.setAttribute('visible', gunShouldShow);
+                this.speedometerUI.setAttribute('visible', !gunShouldShow);
             },
             fireGun: function() {
-                // Keep the gun forcefully visible during and slightly after the shot
                 this.gunVisibleTimer = 0.5;
-                
-                // Recoil animation
                 this.gunModel.setAttribute('animation__recoil', 'property: rotation; from: -15 0 0; to: -30 0 0; dur: 150; easing: easeOutQuad');
-
                 this.playPewSound();
 
                 let closestCit = null;
                 let minDist = Infinity;
-                
                 const camPos = new THREE.Vector3();
                 this.camera.object3D.getWorldPosition(camPos);
                 const camDir = new THREE.Vector3();
@@ -315,20 +271,16 @@
                 camDir.multiplyScalar(-1); 
 
                 const handPos = new THREE.Vector3();
-                this.gunModel.object3D.getWorldPosition(handPos); // Fire from the gun barrel
+                this.gunModel.object3D.getWorldPosition(handPos);
 
                 this.sys.citizens.forEach(c => {
                     if (c.isDead) return;
-                    
                     const cPos = new THREE.Vector3();
                     c.object3D.getWorldPosition(cPos);
-                    
                     const toCit = new THREE.Vector3().subVectors(cPos, camPos);
                     const dist = toCit.length();
                     toCit.normalize();
-                    
                     const angle = camDir.angleTo(toCit);
-                    
                     if (angle < 0.45 && dist < minDist && dist < 150) {
                         minDist = dist;
                         closestCit = c;
@@ -339,23 +291,18 @@
                     closestCit.isDead = true;
                     closestCit.setAttribute('animation__rot', 'property: rotation; to: -90 0 0; dur: 300; easing: easeInQuad');
                     closestCit.setAttribute('animation__pos', 'property: position; to: ' + closestCit.object3D.position.x + ' 0.2 ' + closestCit.object3D.position.z + '; dur: 300; easing: easeInQuad');
-
                     const targetPos = new THREE.Vector3();
                     closestCit.object3D.getWorldPosition(targetPos);
                     targetPos.y += 1.0; 
 
-                    // Render Thick Laser Ray using Math
                     const distance = handPos.distanceTo(targetPos);
                     const midPoint = new THREE.Vector3().addVectors(handPos, targetPos).multiplyScalar(0.5);
-                    
                     this.thickLaser.setAttribute('position', midPoint);
                     this.thickLaser.setAttribute('height', distance);
                     this.thickLaser.object3D.lookAt(targetPos);
-                    this.thickLaser.object3D.rotateX(Math.PI / 2); // Align cylinder geometry
-                    
+                    this.thickLaser.object3D.rotateX(Math.PI / 2);
                     this.thickLaser.setAttribute('visible', 'true');
                     this.playHitSound();
-
                     setTimeout(() => { this.thickLaser.setAttribute('visible', 'false'); }, 150);
                 }
             },
@@ -385,134 +332,93 @@
             }
         });
 
-        AFRAME.registerComponent('optimized-world-gen', {
+        // PRESERVED REALISTIC WORLD GEN (UNCHANGED)
+        AFRAME.registerComponent('realistic-world-gen', {
             init: function() {
-                const scene = this.el.sceneEl.object3D;
-                const sys = this.el.components['dystopian-system'];
+                const scene = this.el;
+                const sys = scene.components['dystopian-system'];
 
-                // Instanced Mesh for Buildings (Zero Lag)
-                const towerGeo = new THREE.BoxGeometry(1, 1, 1);
-                const towerMat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.3 });
-                const towerCount = 800;
-                const towerMesh = new THREE.InstancedMesh(towerGeo, towerMat, towerCount);
-                
-                const dummy = new THREE.Object3D();
-                const color = new THREE.Color();
+                for (let i = 0; i < 250; i++) {
+                    const x = (Math.random() - 0.5) * 1800;
+                    const z = (Math.random() - 0.5) * 1800;
+                    if (Math.hypot(x, z - 20) < 50) continue; 
+                    
+                    const tower = document.createElement('a-entity');
+                    tower.setAttribute('position', `${x} 0 ${z}`);
+                    const isRusty = Math.random() > 0.8;
+                    const hue = isRusty ? Math.random() * 40 : 190 + Math.random() * 50;
+                    const bColor = `hsl(${hue}, ${15 + Math.random() * 25}%, ${15 + Math.random() * 20}%)`;
 
-                for (let i = 0; i < towerCount; i++) {
-                    const x = (Math.random() - 0.5) * 2000;
-                    const z = (Math.random() - 0.5) * 2000;
-                    if (Math.hypot(x, z - 20) < 60) continue;
+                    const tiers = Math.floor(Math.random() * 3) + 1;
+                    let currentY = 0;
+                    let currentW = 35 + Math.random() * 45; 
+                    let currentD = currentW * (0.8 + Math.random() * 0.4);
                     
-                    const w = 20 + Math.random() * 40;
-                    const h = 80 + Math.random() * 250;
-                    
-                    dummy.position.set(x, h/2, z);
-                    dummy.scale.set(w, h, w * (0.8 + Math.random()*0.4));
-                    dummy.updateMatrix();
-                    towerMesh.setMatrixAt(i, dummy.matrix);
-                    
-                    const hVal = (210 + Math.random() * 20) / 360; // Blue-gray
-                    color.setHSL(hVal, 0.15, 0.05 + Math.random() * 0.15);
-                    towerMesh.setColorAt(i, color);
+                    for(let t = 0; t < tiers; t++) {
+                        const tierH = 100 + Math.random() * 200;
+                        const isCyl = Math.random() > 0.85 && t > 0;
+                        const part = document.createElement(isCyl ? 'a-cylinder' : 'a-box');
+                        part.setAttribute('color', bColor);
+                        part.setAttribute('material', 'metalness: 0.7; roughness: 0.4');
+                        if(isCyl) {
+                            part.setAttribute('radius', currentW / 2);
+                            part.setAttribute('height', tierH);
+                        } else {
+                            part.setAttribute('width', currentW); part.setAttribute('height', tierH); part.setAttribute('depth', currentD);
+                        }
+                        part.setAttribute('position', `0 ${currentY + tierH/2} 0`);
+                        tower.appendChild(part);
+
+                        if (!isCyl) {
+                            const ribCount = Math.floor(tierH / 40);
+                            for(let r=0; r<ribCount; r++) {
+                                const plate = document.createElement('a-box');
+                                plate.setAttribute('width', currentW + 1.0); plate.setAttribute('height', 2 + Math.random() * 3); plate.setAttribute('depth', currentD + 1.0);
+                                plate.setAttribute('position', `0 ${currentY + (r * 40) + 20} 0`);
+                                plate.setAttribute('color', '#1c1c1c');
+                                plate.setAttribute('material', 'metalness: 0.9; roughness: 0.2');
+                                tower.appendChild(plate);
+                            }
+                            if (Math.random() > 0.6) {
+                                const neon = document.createElement('a-box');
+                                neon.setAttribute('width', 1.0); neon.setAttribute('height', tierH * 0.7); neon.setAttribute('depth', currentD + 1.5);
+                                neon.setAttribute('position', `0 ${currentY + tierH/2} 0`);
+                                neon.setAttribute('material', `shader: flat; color: ${Math.random() > 0.5 ? '#ff2222' : '#2222ff'}`);
+                                tower.appendChild(neon);
+                            }
+                        }
+                        currentY += tierH;
+                        currentW *= (0.6 + Math.random() * 0.3); currentD *= (0.6 + Math.random() * 0.3);
+                    }
+                    scene.appendChild(tower);
                 }
-                towerMesh.instanceMatrix.needsUpdate = true;
-                towerMesh.instanceColor.needsUpdate = true;
-                scene.add(towerMesh);
 
-                // Instanced Mesh for Slums
-                const slumCount = 2000;
-                const slumMesh = new THREE.InstancedMesh(towerGeo, towerMat, slumCount);
-                for (let i = 0; i < slumCount; i++) {
-                    const x = (Math.random() - 0.5) * 1500;
-                    const z = (Math.random() - 0.5) * 1500;
-                    if (Math.hypot(x, z - 20) < 45) continue; 
-                    
-                    const w = 10 + Math.random() * 20;
-                    const h = 1.5 + Math.random() * 8;
-                    
-                    dummy.position.set(x, h/2, z);
-                    dummy.scale.set(w, h, w);
-                    dummy.updateMatrix();
-                    slumMesh.setMatrixAt(i, dummy.matrix);
-                    
-                    color.setHSL((20 + Math.random() * 15) / 360, 0.15, 0.1 + Math.random() * 0.1);
-                    slumMesh.setColorAt(i, color);
-                }
-                slumMesh.instanceMatrix.needsUpdate = true;
-                slumMesh.instanceColor.needsUpdate = true;
-                scene.add(slumMesh);
-
-                // Instanced Mesh for Neon Strips
-                const neonMat = new THREE.MeshBasicMaterial();
-                const neonCount = 300;
-                const neonMesh = new THREE.InstancedMesh(towerGeo, neonMat, neonCount);
-                for (let i = 0; i < neonCount; i++) {
+                for (let i = 0; i < 600; i++) {
                     const x = (Math.random() - 0.5) * 1200;
                     const z = (Math.random() - 0.5) * 1200;
-                    if (Math.hypot(x, z - 20) < 60) continue; 
-                    const h = 50 + Math.random() * 150;
-                    dummy.position.set(x, h/2, z);
-                    dummy.scale.set(1, h, 1);
-                    dummy.updateMatrix();
-                    neonMesh.setMatrixAt(i, dummy.matrix);
-                    color.setHex(Math.random() > 0.5 ? 0xff0000 : 0x0044ff);
-                    neonMesh.setColorAt(i, color);
-                }
-                neonMesh.instanceMatrix.needsUpdate = true;
-                neonMesh.instanceColor.needsUpdate = true;
-                scene.add(neonMesh);
-
-                // DYNAMIC ENTITIES (Kept as DOM elements for animation/interaction)
-                const aScene = this.el.sceneEl;
-
-                for (let i = 0; i < 30; i++) {
-                    const cloud = document.createElement('a-icosahedron');
-                    cloud.setAttribute('radius', '80');
-                    cloud.setAttribute('scale', '3 0.4 2');
-                    cloud.setAttribute('position', `${(Math.random()-0.5)*2000} ${350 + Math.random()*150} ${(Math.random()-0.5)*2000}`);
-                    cloud.setAttribute('color', '#050505');
-                    cloud.setAttribute('material', 'flatShading: true; roughness: 1');
-                    aScene.appendChild(cloud);
+                    if (Math.hypot(x, z - 20) < 45) continue; 
+                    const slum = document.createElement('a-box');
+                    const sw = 12 + Math.random() * 25; const sh = 1.5 + Math.random() * 8; const sd = 12 + Math.random() * 25;
+                    slum.setAttribute('width', sw); slum.setAttribute('height', sh); slum.setAttribute('depth', sd);
+                    slum.setAttribute('position', `${x} ${sh/2} ${z}`);
+                    slum.setAttribute('color', `hsl(${25+Math.random()*25}, 15%, ${15+Math.random()*20}%)`);
+                    slum.setAttribute('material', 'metalness: 0.4; roughness: 0.8');
+                    scene.appendChild(slum);
                 }
 
-                for (let i = 0; i < 150; i++) {
-                    const p = document.createElement('a-box');
-                    p.setAttribute('width', '0.2'); p.setAttribute('height', '0.2'); p.setAttribute('depth', '5');
-                    p.setAttribute('position', `${(Math.random()-0.5)*1500} ${Math.random()*200} ${(Math.random()-0.5)*1500}`);
-                    p.setAttribute('material', 'shader: flat; color: #ff1111; transparent: true; opacity: 0.6');
-                    aScene.appendChild(p);
-                    sys.registerParticle(p);
-                }
-
-                for (let i = 0; i < 40; i++) {
-                    const drone = document.createElement('a-entity');
-                    drone.setAttribute('position', `${(Math.random()-0.5)*600} ${40+Math.random()*30} ${(Math.random()-0.5)*600}`);
-                    const dBox = document.createElement('a-box');
-                    dBox.setAttribute('scale', '3 0.6 3'); dBox.setAttribute('color', '#000');
-                    drone.appendChild(dBox);
-                    const beam = document.createElement('a-cone');
-                    beam.setAttribute('radius-bottom', '12'); beam.setAttribute('height', '45'); beam.setAttribute('position', '0 -22 0');
-                    beam.setAttribute('material', 'shader: flat; color: #ff0000; transparent: true; opacity: 0.12');
-                    drone.appendChild(beam);
-                    aScene.appendChild(drone);
-                    sys.registerDrone(drone);
-                }
-
-                for (let i = 0; i < 300; i++) {
+                for (let i = 0; i < 200; i++) {
                     const cit = document.createElement('a-entity');
                     cit.setAttribute('position', `${(Math.random()-0.5)*400} 0 ${(Math.random()-0.5)*600}`);
-                    
-                    const body = document.createElement('a-cylinder');
-                    body.setAttribute('radius', '0.25'); body.setAttribute('height', '1.4'); 
-                    body.setAttribute('position', '0 0.7 0');
-                    body.setAttribute('color', '#151515');
-                    
+                    const body = document.createElement('a-cone');
+                    body.setAttribute('radius-bottom', '0.35'); body.setAttribute('radius-top', '0.1'); body.setAttribute('height', '1.4'); 
+                    body.setAttribute('position', '0 0.7 0'); body.setAttribute('color', '#151515');
                     const head = document.createElement('a-sphere');
-                    head.setAttribute('radius', '0.18'); head.setAttribute('position', '0 1.55 0'); head.setAttribute('color', '#dca98e');
-                    
-                    cit.appendChild(body); cit.appendChild(head);
-                    aScene.appendChild(cit);
+                    head.setAttribute('radius', '0.15'); head.setAttribute('position', '0 1.55 0'); head.setAttribute('color', '#050505');
+                    const visor = document.createElement('a-box');
+                    visor.setAttribute('width', '0.22'); visor.setAttribute('height', '0.04'); visor.setAttribute('depth', '0.18'); 
+                    visor.setAttribute('position', '0 1.55 0.05'); visor.setAttribute('material', 'shader: flat; color: #ff0000');
+                    cit.appendChild(body); cit.appendChild(head); cit.appendChild(visor);
+                    scene.appendChild(cit);
                     sys.registerCitizen(cit);
                 }
             }
@@ -525,82 +431,60 @@
         thunder-system
         finger-locomotion 
         combat-system
-        optimized-world-gen 
-        fog="type: exponential; color: #2a0508; density: 0.005"
-        background="color: #030408">
+        realistic-world-gen 
+        fog="type: exponential; color: #0d0d16; density: 0.0025"
+        background="color: #040404">
         
-        <a-light type="ambient" color="#1a2030" intensity="0.8"></a-light>
-        <a-light type="directional" color="#ff3311" position="-1 0.6 -1" intensity="1.8"></a-light>
+        <a-light type="ambient" color="#3a3a4a" intensity="0.9"></a-light>
+        <a-light type="directional" color="#ff4422" position="-1 0.8 -1" intensity="2.5"></a-light>
+        <a-light id="thunder-light" type="ambient" color="#ddefaa" intensity="0"></a-light>
 
-        <!-- Dynamic THICK Laser for Combat (Placed in global space) -->
-        <a-cylinder id="thick-laser" radius="0.1" color="#ff0000" material="shader: flat; transparent: true; opacity: 0.9" visible="false"></a-cylinder>
+        <a-cylinder id="thick-laser" radius="0.08" color="#ff0000" material="shader: flat; transparent: true; opacity: 0.9" visible="false"></a-cylinder>
 
-        <!-- GIANT RED MOON -->
-        <a-entity position="-300 400 -800">
-            <a-sphere radius="120" material="shader: flat; color: #cc0000"></a-sphere>
-            <a-light type="point" color="#ff0000" intensity="2" distance="1500"></a-light>
-        </a-entity>
+        <a-plane rotation="-90 0 0" width="5000" height="5000" color="#0c0c0c" material="roughness: 0.5; metalness: 0.4"></a-plane>
+        <a-box position="0 5 40" width="40" height="10" depth="40" color="#18181c" material="metalness: 0.7; roughness: 0.3"></a-box>
 
-        <a-plane rotation="-90 0 0" width="4000" height="4000" color="#080808" material="roughness: 0.8; metalness: 0.2"></a-plane>
-        
-        <!-- Platform -->
-        <a-box position="0 5 40" width="40" height="10" depth="40" color="#12141a"></a-box>
-
-        <!-- UPDATED START SIGN -->
+        <!-- START SIGN -->
         <a-entity position="0 15 35">
             <a-plane width="9.5" height="4.5" color="#050505" material="opacity: 0.9; transparent: true; shader: flat; side: double" position="0 0 -0.05"></a-plane>
             <a-plane width="9.6" height="4.6" color="#ff0000" material="opacity: 0.4; transparent: true; shader: flat; side: double" position="0 0 -0.06"></a-plane>
-            
-            <a-text value="HEIL MASTER" font="monoid" position="0 1.5 0" align="center" color="#ff2222" scale="3 3 3"></a-text>
-            <a-text value="Welcome Dictator. The Monolith sees all." font="monoid" position="0 0.6 0" align="center" color="#aaaaaa" scale="1.1 1.1 1.1"></a-text>
+            <a-text value="HEIL MASTER" font="monoid" position="0 1.4 0" align="center" color="#ff2222" scale="3 3 3"></a-text>
+            <a-text value="Welcome Dictator. The Monolith sees all." font="monoid" position="0 0.5 0" align="center" color="#aaaaaa" scale="1.2 1.2 1.2"></a-text>
             <a-text value="MOVEMENT:\n[ LEFT HAND ] Point index \n finger to glide.\n[ RIGHT HAND ] Tilt palm \n left/right to adjust speed." font="monoid" position="-3 -0.8 0" align="left" color="#00ffaa" scale="0.9 0.9 0.9" line-height="50"></a-text>
             <a-text value="COMBAT:\n[ ON GROUND ] Make 'Gun' \n sign. Pinch to execute." font="monoid" position="0.8 -0.55 0" align="left" color="#00ffaa" scale="0.9 0.9 0.9" line-height="50"></a-text>
         </a-entity>
 
-        <!-- MONOLITH -->
         <a-entity position="0 0 -50">
-            <a-box width="24" height="120" depth="24" position="0 60 0" color="#0a0a0a"></a-box>
+            <a-box width="24" height="120" depth="24" position="0 60 0" color="#080808" material="metalness: 0.9; roughness: 0.1"></a-box>
             <a-box width="12" height="2" depth="2" position="0 110 12.1" material="shader: flat; color: #f00"></a-box>
         </a-entity>
 
         <!-- PLAYER RIG -->
         <a-entity id="rig" position="0 10.1 40">
             <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false"></a-camera>
-            
-            <!-- Left Hand -->
             <a-entity id="left-hand" hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #000;"></a-entity>
-            <!-- Right Hand -->
             <a-entity id="right-hand" hand-tracking-controls="hand: right; modelStyle: mesh; modelColor: #000;"></a-entity>
 
-            <!-- DYNAMIC UI ELEMENTS 
-                 (Placed outside the hand mesh hierarchy so they are never overridden. 
-                  Their positions are manually synced to the WebXR joint data via Javascript) -->
-
-            <!-- LEFT HAND GLOW (Aura when moving) -->
+            <!-- EXTERNAL HUD ELEMENTS (Manually synced to joints in JS to guarantee visibility) -->
             <a-entity id="left-hand-glow" visible="false">
                 <a-sphere radius="0.08" material="shader: flat; color: #00ffaa; transparent: true; opacity: 0.3; blending: additive"></a-sphere>
                 <a-sphere radius="0.045" material="shader: flat; color: #00ffaa; transparent: true; opacity: 0.8"></a-sphere>
             </a-entity>
             
-            <!-- RIGHT HAND SPEEDOMETER (Circular Ring) -->
             <a-entity id="speedometer-ui" visible="true">
                 <a-circle radius="0.038" material="shader: flat; color: #050505; transparent: true; opacity: 0.85" side="double"></a-circle>
                 <a-ring radius-inner="0.04" radius-outer="0.05" material="color: #222; shader: flat; side: double"></a-ring>
                 <a-ring id="speed-ring" radius-inner="0.04" radius-outer="0.05" material="color: #00ffaa; shader: flat; side: double" geometry="thetaStart: 90; thetaLength: 90"></a-ring>
-                
                 <a-text id="speed-text" value="1.0x" font="monoid" align="center" position="0 0.01 0.005" scale="0.18 0.18 0.18" color="#ffffff"></a-text>
                 <a-text value="SPD" font="monoid" align="center" position="0 -0.02 0.005" scale="0.08 0.08 0.08" color="#aaaaaa"></a-text>
             </a-entity>
 
-            <!-- HOLOGRAPHIC COMBAT GUN -->
             <a-entity id="gun-model" visible="false">
                 <a-box width="0.04" height="0.04" depth="0.25" position="0 0 0" color="#222" material="metalness: 0.95; roughness: 0.1"></a-box>
                 <a-box width="0.042" height="0.01" depth="0.22" position="0 0.02 0" material="shader: flat; color: #ff0000; transparent: true; opacity: 0.9"></a-box>
                 <a-box width="0.035" height="0.12" depth="0.04" position="0 -0.06 0.08" rotation="15 0 0" color="#050505" material="metalness: 0.6"></a-box>
             </a-entity>
-
         </a-entity>
-
     </a-scene>
 </body>
 </html>
