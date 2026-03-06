@@ -2,217 +2,114 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>VR Finger-Walking Locomotion</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- A-Frame Library -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <style>
-      body { margin: 0; overflow: hidden; background-color: #000; }
-      #info-overlay {
-        position: absolute; bottom: 20px; left: 20px;
-        color: white; font-family: monospace; pointer-events: none;
-        background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="info-overlay">
-      Walk by tapping index/middle fingers to palm.<br>
-      Direct your palm to steer.
-    </div>
+    <title>VR Pinch & Pull Locomotion</title>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://unpkg.com/aframe-environment-component@1.3.2/dist/aframe-environment-component.min.js"></script>
 
     <script>
-      // Procedural Audio Helper
-      const playStepSound = (ctx) => {
-        if (!ctx) return;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(150, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.1);
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.1);
-      };
-
-      AFRAME.registerComponent('finger-walk-locomotion', {
+      AFRAME.registerComponent('pinch-locomotion', {
         schema: {
-          rig: { type: 'selector' },
-          speedMultiplier: { default: 2.5 },
-          threshold: { default: 0.025 }, // Distance in meters
-          windowSize: { default: 5 }
+          rigId: { type: 'string', default: '#rig' },
+          speed: { type: 'number', default: 1.5 }, // Sensitivity of the pull
+          feedbackColor: { type: 'color', default: '#00FFFF' }
         },
 
         init: function () {
-          this.stepTimestamps = [];
-          this.lastIndexState = false; // true if index is "down" (touching palm)
-          this.lastMiddleState = false;
-          this.currentSpeed = 0;
-          this.direction = new THREE.Vector3();
+          this.rig = document.querySelector(this.data.rigId);
+          this.isPinching = false;
           
-          // Audio Context Initialization on first interaction
-          this.audioCtx = null;
-          window.addEventListener('click', () => {
-            if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          }, { once: true });
+          // Internal State
+          this.initialHandPos = new THREE.Vector3();
+          this.currentHandPos = new THREE.Vector3();
+          this.delta = new THREE.Vector3();
+          
+          // Bind Hand Events
+          this.el.addEventListener('pinchstarted', (evt) => this.onPinchStart(evt));
+          this.el.addEventListener('pinchended', (evt) => this.onPinchEnd(evt));
+          
+          // Visual Feedback: Create a small glowing spark at the pinch point
+          this.feedbackOrb = document.createElement('a-sphere');
+          this.feedbackOrb.setAttribute('radius', '0.02');
+          this.feedbackOrb.setAttribute('color', this.data.feedbackColor);
+          this.feedbackOrb.setAttribute('material', 'emissive', this.data.feedbackColor);
+          this.feedbackOrb.setAttribute('visible', 'false');
+          this.el.appendChild(this.feedbackOrb);
+        },
 
-          // Visual Feedback: Ripple Pool
-          this.ripples = [];
-          for(let i=0; i<5; i++) {
-            let r = document.createElement('a-ring');
-            r.setAttribute('radius-inner', 0.005);
-            r.setAttribute('radius-outer', 0.01);
-            r.setAttribute('color', '#4CC3D9');
-            r.setAttribute('visible', false);
-            r.setAttribute('rotation', '-90 0 0');
-            this.el.appendChild(r);
-            this.ripples.push(r);
-          }
-          this.rippleIdx = 0;
+        onPinchStart: function (evt) {
+          this.isPinching = true;
+          // Record the world position where the pinch started
+          this.initialHandPos.copy(evt.detail.position);
+          
+          // Show visual feedback at the hand
+          this.feedbackOrb.setAttribute('visible', 'true');
+          this.feedbackOrb.setAttribute('position', this.el.object3D.worldToLocal(this.initialHandPos.clone()));
+        },
 
-          // Speedometer UI
-          this.speedBar = document.createElement('a-box');
-          this.speedBar.setAttribute('width', 0.005);
-          this.speedBar.setAttribute('height', 0.01);
-          this.speedBar.setAttribute('depth', 0.05);
-          this.speedBar.setAttribute('color', '#FFC65D');
-          this.speedBar.setAttribute('position', '0 0.05 0');
-          this.el.appendChild(this.speedBar);
+        onPinchEnd: function () {
+          this.isPinching = false;
+          this.feedbackOrb.setAttribute('visible', 'false');
         },
 
         tick: function (time, delta) {
-          const hand = this.el.components['hand-tracking-controls'];
-          if (!hand || !hand.mesh || !hand.mesh.visible) return;
+          if (!this.isPinching) return;
 
-          // Joint indices: palm (0), index-tip (9), middle-tip (14) in WebXR standard
-          const joints = hand.mesh.skeleton.bones;
-          if (joints.length < 25) return;
+          // Get the current position of the hand in world space
+          this.el.object3D.getWorldPosition(this.currentHandPos);
 
-          const palmPos = joints[0].position;
-          const indexPos = joints[9].position;
-          const middlePos = joints[14].position;
+          // Calculate how far the hand has moved since the pinch started
+          // Movement = Initial - Current (to pull the world toward you)
+          this.delta.subVectors(this.initialHandPos, this.currentHandPos);
 
-          const distIndex = palmPos.distanceTo(indexPos);
-          const distMiddle = palmPos.distanceTo(middlePos);
-
-          const indexDown = distIndex < this.data.threshold;
-          const middleDown = distMiddle < this.data.threshold;
-
-          // Detect new step (alternating taps)
-          if ((indexDown && !this.lastIndexState) || (middleDown && !this.lastMiddleState)) {
-            this.onStep(palmPos);
-          }
-
-          this.lastIndexState = indexDown;
-          this.lastMiddleState = middleDown;
-
-          // Calculate Frequency & Speed
-          this.cleanupTimestamps(time);
-          if (this.stepTimestamps.length > 1) {
-            const duration = (this.stepTimestamps[this.stepTimestamps.length - 1] - this.stepTimestamps[0]) / 1000;
-            const freq = (this.stepTimestamps.length - 1) / Math.max(duration, 0.1);
-            this.currentSpeed = Math.min(freq * this.data.speedMultiplier * 0.5, 4.0);
-          } else {
-            this.currentSpeed *= 0.95; // Decay
-          }
-
-          // Apply Movement
-          if (this.currentSpeed > 0.05) {
-            // Forward is defined by palm orientation (Z-axis of the palm joint)
-            const worldRotation = new THREE.Quaternion();
-            joints[0].getWorldQuaternion(worldRotation);
-            this.direction.set(0, 0, -1).applyQuaternion(worldRotation);
-            this.direction.y = 0; // Keep on ground
-            this.direction.normalize();
-
-            const moveStep = this.direction.multiplyScalar(this.currentSpeed * (delta / 1000));
-            this.data.rig.object3D.position.add(moveStep);
-          }
-
-          // Update UI
-          this.updateUI();
-        },
-
-        onStep: function (pos) {
-          this.stepTimestamps.push(performance.now());
-          if (this.stepTimestamps.length > this.data.windowSize) this.stepTimestamps.shift();
-
-          // Visual Ripple
-          const r = this.ripples[this.rippleIdx];
-          r.object3D.position.copy(pos);
-          r.setAttribute('visible', true);
-          r.setAttribute('scale', '1 1 1');
+          // Apply locomotion to the rig
+          const rigPos = this.rig.getAttribute('position');
+          rigPos.x += this.delta.x * this.data.speed;
+          rigPos.y += this.delta.y * this.data.speed; // Allows vertical swimming/climbing
+          rigPos.z += this.delta.z * this.data.speed;
           
-          let s = 1;
-          const animateRipple = () => {
-            s += 0.2;
-            r.setAttribute('scale', `${s} ${s} ${s}`);
-            if (s > 4) {
-              r.setAttribute('visible', false);
-            } else {
-              requestAnimationFrame(animateRipple);
-            }
-          };
-          animateRipple();
-          this.rippleIdx = (this.rippleIdx + 1) % this.ripples.length;
+          this.rig.setAttribute('position', rigPos);
 
-          // Audio
-          playStepSound(this.audioCtx);
-        },
-
-        cleanupTimestamps: function (now) {
-          // Remove steps older than 1.5 seconds to stop movement when user stops tapping
-          while (this.stepTimestamps.length > 0 && now - this.stepTimestamps[0] > 1500) {
-            this.stepTimestamps.shift();
-          }
-        },
-
-        updateUI: function () {
-          const scale = 0.1 + (this.currentSpeed * 0.5);
-          this.speedBar.setAttribute('scale', `1 ${scale} 1`);
-          const color = this.currentSpeed > 2 ? '#EF2D5E' : '#FFC65D';
-          this.speedBar.setAttribute('color', color);
+          // Update the "anchor" so the movement is continuous and smooth
+          this.initialHandPos.copy(this.currentHandPos);
+          
+          // Pulse the feedback orb based on movement speed
+          const pulse = 0.5 + Math.sin(time / 100) * 0.5;
+          this.feedbackOrb.setAttribute('material', 'emissiveIntensity', 1 + pulse);
         }
       });
     </script>
-
-    <a-scene webxr="requiredFeatures: hand-tracking; overlayElement: #info-overlay;">
-      <!-- Assets -->
+  </head>
+  <body>
+    <a-scene webxr="optionalFeatures: hand-tracking">
+      
       <a-assets>
-        <img id="grid" src="https://img.gs/bbbbpjtgap/20x20/https://i.imgur.com/W4MbeQp.png">
+        <a-mixin id="monolith" geometry="primitive: box; width: 2; height: 10; depth: 2" material="color: #333; metalness: 0.8; roughness: 0.2"></a-mixin>
       </a-assets>
 
-      <!-- Player Rig -->
+      <a-entity environment="preset: starry; grid: dots; groundColor: #111; gridColor: #444"></a-entity>
+
+      <a-entity mixin="monolith" position="-10 5 -15" material="color: #ff4444"></a-entity>
+      <a-entity mixin="monolith" position="10 5 -15" material="color: #44ff44"></a-entity>
+      <a-entity mixin="monolith" position="0 5 -25" material="color: #4444ff"></a-entity>
+
       <a-entity id="rig" position="0 0 0">
-        <a-camera id="camera" look-controls position="0 1.6 0"></a-camera>
-        
-        <!-- Hands -->
-        <a-entity id="leftHand" hand-tracking-controls="hand: left;" 
-                  finger-walk-locomotion="rig: #rig"></a-entity>
-        
-        <a-entity id="rightHand" hand-tracking-controls="hand: right;" 
-                  finger-walk-locomotion="rig: #rig"></a-entity>
+        <a-entity id="camera" camera look-controls position="0 1.6 0">
+          <a-text value="PINCH AND PULL AIR TO MOVE" 
+                  position="0 0.4 -1" align="center" width="1.2" color="#00FFFF">
+          </a-text>
+        </a-entity>
+
+        <a-entity id="leftHand" 
+                  hand-tracking-controls="hand: left" 
+                  pinch-locomotion="rigId: #rig; speed: 1.2; feedbackColor: #FF00FF">
+        </a-entity>
+
+        <a-entity id="rightHand" 
+                  hand-tracking-controls="hand: right" 
+                  pinch-locomotion="rigId: #rig; speed: 1.2; feedbackColor: #00FFFF">
+        </a-entity>
       </a-entity>
 
-      <!-- Environment -->
-      <a-sky color="#ECECEC"></a-sky>
-      
-      <!-- Ground -->
-      <a-plane position="0 0 0" rotation="-90 0 0" width="100" height="100" 
-               src="#grid" repeat="100 100" material="roughness: 1;"></a-plane>
-
-      <!-- Reference Objects -->
-      <a-box position="-5 0.5 -10" color="#4CC3D9" shadow></a-box>
-      <a-sphere position="5 1.25 -15" radius="1.25" color="#EF2D5E" shadow></a-sphere>
-      <a-cylinder position="12 0.75 -5" radius="0.5" height="1.5" color="#FFC65D" shadow></a-cylinder>
-      <a-torus-knot position="-15 1.5 -20" color="#7BC8A4" scale="2 2 2"></a-torus-knot>
-      
-      <!-- Lighting -->
-      <a-entity light="type: ambient; color: #BBB"></a-entity>
-      <a-entity light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
     </a-scene>
   </body>
 </html>
