@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Hyper-Realistic Dystopian Megacity - Smooth Update</title>
+    <title>Hyper-Realistic Dystopian Megacity - Ultimate HUD</title>
     <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
     <script>
@@ -96,23 +96,26 @@
             }
         });
 
-        // SMOOTHED LOCOMOTION
+        // SMOOTHED LOCOMOTION WITH GLOW & CIRCULAR SPEEDOMETER
         AFRAME.registerComponent('finger-locomotion', {
-            schema: { baseSpeed: { type: 'number', default: 0.5 }, threshold: { type: 'number', default: 0.035 }, rig: { type: 'selector', default: '#rig' } },
+            schema: { 
+                baseSpeed: { type: 'number', default: 0.5 }, 
+                threshold: { type: 'number', default: 0.035 }, 
+                rig: { type: 'selector', default: '#rig' },
+                leftHandGlow: { type: 'selector', default: '#left-hand-glow' }
+            },
             init: function() {
                 this.vector = new THREE.Vector3();
                 this.targetVelocity = new THREE.Vector3();
                 this.currentVelocity = new THREE.Vector3(); // For LERP smoothing
                 this.proximalPos = new THREE.Vector3();
                 this.tipPos = new THREE.Vector3();
-                this.lookAtPos = new THREE.Vector3();
                 this.currentSpeedMultiplier = 1.0;
-                this.arrow = document.querySelector('#movement-arrow');
                 
                 this.speedText = document.querySelector('#speed-text');
-                this.speedBar = document.querySelector('#speed-bar');
+                this.speedRing = document.querySelector('#speed-ring');
             },
-            tick: function() {
+            tick: function(t, dt) {
                 const xr = this.el.renderer.xr;
                 const session = xr.getSession();
                 if (!session) return;
@@ -140,21 +143,20 @@
                     }
                 }
 
-                // UPDATE SPEEDOMETER HUD
+                // UPDATE CIRCULAR SPEEDOMETER HUD
                 if (this.speedText) this.speedText.setAttribute('value', this.currentSpeedMultiplier.toFixed(1) + 'x');
-                if (this.speedBar) {
-                    // Bar max width is 0.16
-                    const barW = (this.currentSpeedMultiplier / 4.0) * 0.16;
-                    this.speedBar.setAttribute('width', barW);
-                    this.speedBar.setAttribute('position', `${(barW / 2) - 0.08} 0 0.001`);
+                if (this.speedRing) {
+                    const maxAngle = 360;
+                    const fillAmount = (this.currentSpeedMultiplier / 4.0) * maxAngle;
+                    this.speedRing.setAttribute('geometry', 'thetaLength', fillAmount);
                     
-                    let barColor = '#00ffaa';
-                    if (this.currentSpeedMultiplier > 2.8) barColor = '#ff2222';
-                    else if (this.currentSpeedMultiplier > 1.5) barColor = '#ffaa00';
-                    this.speedBar.setAttribute('color', barColor);
+                    let ringColor = '#00ffaa';
+                    if (this.currentSpeedMultiplier > 2.8) ringColor = '#ff2222';
+                    else if (this.currentSpeedMultiplier > 1.5) ringColor = '#ffaa00';
+                    this.speedRing.setAttribute('material', 'color', ringColor);
                 }
 
-                // 2. DIRECTION & SMOOTH MOVEMENT
+                // 2. DIRECTION & SMOOTH MOVEMENT (LEFT HAND)
                 let isMoving = false;
                 if (leftHand) {
                     const pJoint = leftHand.hand.get('index-finger-phalanx-proximal');
@@ -173,15 +175,21 @@
                             
                             // Set Target Velocity
                             this.targetVelocity.copy(this.vector).applyQuaternion(this.data.rig.object3D.quaternion).multiplyScalar(speed);
-                            
-                            this.updateArrow(this.tipPos, this.vector);
                         }
                     }
                 }
 
                 if (!isMoving) {
                     this.targetVelocity.set(0, 0, 0);
-                    this.stopArrow();
+                }
+
+                // Update Left Hand Glow Feedback
+                if (this.data.leftHandGlow) {
+                    if (isMoving && !this.data.leftHandGlow.getAttribute('visible')) {
+                        this.data.leftHandGlow.setAttribute('visible', 'true');
+                    } else if (!isMoving && this.data.leftHandGlow.getAttribute('visible')) {
+                        this.data.leftHandGlow.setAttribute('visible', 'false');
+                    }
                 }
 
                 // APPLY LERP (Smooths out all micro-stutters and lag)
@@ -192,15 +200,7 @@
                     if (n.y < 0.2) n.y = 0.2; // Floor collision
                     this.data.rig.object3D.position.copy(n);
                 }
-            },
-            updateArrow: function(pos, dir) {
-                if (!this.arrow) return;
-                this.arrow.setAttribute('visible', 'true');
-                this.arrow.object3D.position.copy(pos).addScaledVector(dir, 0.1);
-                this.lookAtPos.copy(this.arrow.object3D.position).add(dir);
-                this.arrow.object3D.lookAt(this.lookAtPos);
-            },
-            stopArrow: function() { if (this.arrow) this.arrow.setAttribute('visible', 'false'); }
+            }
         });
 
         // COMBAT SYSTEM (Thick Laser & Maintained Gun Visibility)
@@ -509,33 +509,40 @@
         <a-entity id="rig" position="0 10.1 40">
             <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false"></a-camera>
             
-            <a-entity hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #000;"></a-entity>
+            <!-- LEFT HAND (Locomotion Drive) -->
+            <a-entity id="left-hand" hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #000;">
+                <!-- Glowing Green Aura (Visible only while moving) -->
+                <a-entity id="left-hand-glow" visible="false">
+                    <!-- Outer Additive Glow -->
+                    <a-sphere radius="0.08" material="shader: flat; color: #00ffaa; transparent: true; opacity: 0.3; blending: additive"></a-sphere>
+                    <!-- Inner Core -->
+                    <a-sphere radius="0.045" material="shader: flat; color: #00ffaa; transparent: true; opacity: 0.8"></a-sphere>
+                </a-entity>
+            </a-entity>
             
+            <!-- RIGHT HAND (Throttle & Combat) -->
             <a-entity id="right-hand" hand-tracking-controls="hand: right; modelStyle: mesh; modelColor: #000;">
                 
-                <!-- VISUAL SPEEDOMETER HUD (Clear floating panel) -->
-                <a-entity id="speedometer-ui" position="-0.08 0.1 0" rotation="-30 0 0">
-                    <a-plane width="0.2" height="0.1" color="#050505" material="opacity: 0.8; transparent: true"></a-plane>
-                    <!-- Background bar track -->
-                    <a-plane width="0.16" height="0.015" position="0 0 0.001" color="#222"></a-plane>
-                    <!-- Dynamic fill bar -->
-                    <a-plane id="speed-bar" width="0.04" height="0.015" position="-0.06 0 0.002" color="#00ffaa"></a-plane>
+                <!-- CIRCULAR SPEEDOMETER HUD -->
+                <a-entity id="speedometer-ui" position="-0.08 0.08 0" rotation="-30 0 0">
+                    <!-- Inner Dark Backdrop -->
+                    <a-circle radius="0.038" material="shader: flat; color: #050505; transparent: true; opacity: 0.8"></a-circle>
+                    <!-- Background Track Ring -->
+                    <a-ring radius-inner="0.04" radius-outer="0.05" material="color: #222; shader: flat; side: double"></a-ring>
+                    <!-- Dynamic Fill Ring (Mapped to speed) -->
+                    <a-ring id="speed-ring" radius-inner="0.04" radius-outer="0.05" material="color: #00ffaa; shader: flat; side: double" geometry="thetaStart: 90; thetaLength: 90"></a-ring>
                     
-                    <a-text id="speed-text" value="1.0x" font="monoid" align="center" position="0 0.03 0.001" scale="0.15 0.15 0.15" color="#ffffff"></a-text>
-                    <a-text value="THROTTLE" font="monoid" align="center" position="0 -0.03 0.001" scale="0.08 0.08 0.08" color="#aaaaaa"></a-text>
+                    <a-text id="speed-text" value="1.0x" font="monoid" align="center" position="0 0.01 0.001" scale="0.15 0.15 0.15" color="#ffffff"></a-text>
+                    <a-text value="SPD" font="monoid" align="center" position="0 -0.02 0.001" scale="0.08 0.08 0.08" color="#aaaaaa"></a-text>
                 </a-entity>
 
-                <!-- VISIBLE HOLOGRAPHIC GUN (Has recoil animation on fire) -->
+                <!-- VISIBLE HOLOGRAPHIC GUN -->
                 <a-entity id="gun-model" visible="false" position="0 0.05 -0.1" rotation="15 0 0">
                     <a-box width="0.04" height="0.04" depth="0.25" position="0 0 0" color="#222" material="metalness: 0.95; roughness: 0.1"></a-box>
                     <a-box width="0.042" height="0.01" depth="0.22" position="0 0.02 0" material="shader: flat; color: #ff0000; transparent: true; opacity: 0.9"></a-box>
                     <a-box width="0.035" height="0.12" depth="0.04" position="0 -0.06 0.08" rotation="15 0 0" color="#050505" material="metalness: 0.6"></a-box>
                 </a-entity>
 
-            </a-entity>
-            
-            <a-entity id="movement-arrow" visible="false">
-                <a-cone radius-bottom="0.03" radius-top="0" height="0.25" rotation="90 0 0" material="shader: flat"></a-cone>
             </a-entity>
         </a-entity>
 
