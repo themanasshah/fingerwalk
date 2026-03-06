@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Hyper-Realistic Dystopian Megacity - Ultra Detail</title>
+    <title>Hyper-Realistic Dystopian Megacity - Smooth Update</title>
     <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
     <script>
@@ -18,19 +18,17 @@
                 this.timer -= dt * 0.001;
                 if (this.timer <= 0) {
                     this.strike();
-                    this.timer = Math.random() * 8 + 6; // 6 to 14 seconds between strikes
+                    this.timer = Math.random() * 8 + 6;
                 }
             },
             strike: function() {
-                // Global Environment Flash (Brighter ambient burst)
-                this.flashLight.setAttribute('intensity', '6');
+                this.flashLight.setAttribute('intensity', '7');
                 setTimeout(() => this.flashLight.setAttribute('intensity', '0'), 50);
-                setTimeout(() => this.flashLight.setAttribute('intensity', '3'), 150);
+                setTimeout(() => this.flashLight.setAttribute('intensity', '4'), 150);
                 setTimeout(() => this.flashLight.setAttribute('intensity', '0'), 250);
-                setTimeout(() => this.flashLight.setAttribute('intensity', '2'), 400);
+                setTimeout(() => this.flashLight.setAttribute('intensity', '2.5'), 400);
                 setTimeout(() => this.flashLight.setAttribute('intensity', '0'), 600);
                 
-                // Audio Synthesis for deep rolling Thunder
                 if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
                 
@@ -98,19 +96,21 @@
             }
         });
 
-        // LOCOMOTION
+        // SMOOTHED LOCOMOTION
         AFRAME.registerComponent('finger-locomotion', {
-            schema: { baseSpeed: { type: 'number', default: 0.45 }, threshold: { type: 'number', default: 0.035 }, rig: { type: 'selector', default: '#rig' } },
+            schema: { baseSpeed: { type: 'number', default: 0.5 }, threshold: { type: 'number', default: 0.035 }, rig: { type: 'selector', default: '#rig' } },
             init: function() {
                 this.vector = new THREE.Vector3();
-                this.worldVector = new THREE.Vector3();
+                this.targetVelocity = new THREE.Vector3();
+                this.currentVelocity = new THREE.Vector3(); // For LERP smoothing
                 this.proximalPos = new THREE.Vector3();
                 this.tipPos = new THREE.Vector3();
                 this.lookAtPos = new THREE.Vector3();
                 this.currentSpeedMultiplier = 1.0;
                 this.arrow = document.querySelector('#movement-arrow');
+                
                 this.speedText = document.querySelector('#speed-text');
-                this.speedRing = document.querySelector('#speed-ring');
+                this.speedBar = document.querySelector('#speed-bar');
             },
             tick: function() {
                 const xr = this.el.renderer.xr;
@@ -128,6 +128,7 @@
                     }
                 }
 
+                // 1. SPEED CONTROL (RIGHT HAND)
                 if (rightHand) {
                     const rWrist = rightHand.hand.get('wrist');
                     const rWristPose = frame.getJointPose(rWrist, refSpace);
@@ -139,38 +140,58 @@
                     }
                 }
 
+                // UPDATE SPEEDOMETER HUD
                 if (this.speedText) this.speedText.setAttribute('value', this.currentSpeedMultiplier.toFixed(1) + 'x');
-                if (this.speedRing) {
-                    const angle = (this.currentSpeedMultiplier / 4.0) * 360;
-                    this.speedRing.setAttribute('geometry', 'thetaLength', angle);
-                    let ringColor = '#00ff00';
-                    if (this.currentSpeedMultiplier > 2.5) ringColor = '#ff2222';
-                    else if (this.currentSpeedMultiplier > 1.3) ringColor = '#ffaa00';
-                    this.speedRing.setAttribute('material', 'color', ringColor);
+                if (this.speedBar) {
+                    // Bar max width is 0.16
+                    const barW = (this.currentSpeedMultiplier / 4.0) * 0.16;
+                    this.speedBar.setAttribute('width', barW);
+                    this.speedBar.setAttribute('position', `${(barW / 2) - 0.08} 0 0.001`);
+                    
+                    let barColor = '#00ffaa';
+                    if (this.currentSpeedMultiplier > 2.8) barColor = '#ff2222';
+                    else if (this.currentSpeedMultiplier > 1.5) barColor = '#ffaa00';
+                    this.speedBar.setAttribute('color', barColor);
                 }
 
-                if (!leftHand) { this.stop(); return; }
-                const pJoint = leftHand.hand.get('index-finger-phalanx-proximal');
-                const tJoint = leftHand.hand.get('index-finger-tip');
-                const pPose = frame.getJointPose(pJoint, refSpace);
-                const tPose = frame.getJointPose(tJoint, refSpace);
+                // 2. DIRECTION & SMOOTH MOVEMENT
+                let isMoving = false;
+                if (leftHand) {
+                    const pJoint = leftHand.hand.get('index-finger-phalanx-proximal');
+                    const tJoint = leftHand.hand.get('index-finger-tip');
+                    const pPose = frame.getJointPose(pJoint, refSpace);
+                    const tPose = frame.getJointPose(tJoint, refSpace);
 
-                if (pPose && tPose) {
-                    this.proximalPos.set(pPose.transform.position.x, pPose.transform.position.y, pPose.transform.position.z);
-                    this.tipPos.set(tPose.transform.position.x, tPose.transform.position.y, tPose.transform.position.z);
-                    
-                    if (this.proximalPos.distanceTo(this.tipPos) > this.data.threshold) {
-                        this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
-                        const speed = this.data.baseSpeed * this.currentSpeedMultiplier;
-                        this.worldVector.copy(this.vector).applyQuaternion(this.data.rig.object3D.quaternion).multiplyScalar(speed);
+                    if (pPose && tPose) {
+                        this.proximalPos.set(pPose.transform.position.x, pPose.transform.position.y, pPose.transform.position.z);
+                        this.tipPos.set(tPose.transform.position.x, tPose.transform.position.y, tPose.transform.position.z);
                         
-                        const n = this.data.rig.object3D.position.clone().add(this.worldVector);
-                        if (n.y < 0.2) n.y = 0.2; // Floor collision ensures smooth ground walking
-                        
-                        this.data.rig.object3D.position.copy(n);
-                        this.updateArrow(this.tipPos, this.vector);
-                    } else { this.stop(); }
-                } else { this.stop(); }
+                        if (this.proximalPos.distanceTo(this.tipPos) > this.data.threshold) {
+                            isMoving = true;
+                            this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
+                            const speed = this.data.baseSpeed * this.currentSpeedMultiplier;
+                            
+                            // Set Target Velocity
+                            this.targetVelocity.copy(this.vector).applyQuaternion(this.data.rig.object3D.quaternion).multiplyScalar(speed);
+                            
+                            this.updateArrow(this.tipPos, this.vector);
+                        }
+                    }
+                }
+
+                if (!isMoving) {
+                    this.targetVelocity.set(0, 0, 0);
+                    this.stopArrow();
+                }
+
+                // APPLY LERP (Smooths out all micro-stutters and lag)
+                this.currentVelocity.lerp(this.targetVelocity, 0.15);
+
+                if (this.currentVelocity.lengthSq() > 0.0001) {
+                    const n = this.data.rig.object3D.position.clone().add(this.currentVelocity);
+                    if (n.y < 0.2) n.y = 0.2; // Floor collision
+                    this.data.rig.object3D.position.copy(n);
+                }
             },
             updateArrow: function(pos, dir) {
                 if (!this.arrow) return;
@@ -179,10 +200,10 @@
                 this.lookAtPos.copy(this.arrow.object3D.position).add(dir);
                 this.arrow.object3D.lookAt(this.lookAtPos);
             },
-            stop: function() { if (this.arrow) this.arrow.setAttribute('visible', 'false'); }
+            stopArrow: function() { if (this.arrow) this.arrow.setAttribute('visible', 'false'); }
         });
 
-        // COMBAT SYSTEM (Vision Aim & Gestures)
+        // COMBAT SYSTEM (Thick Laser & Maintained Gun Visibility)
         AFRAME.registerComponent('combat-system', {
             init: function() {
                 this.rig = document.querySelector('#rig');
@@ -190,7 +211,7 @@
                 this.rightHand = document.querySelector('#right-hand');
                 this.speedometerUI = document.querySelector('#speedometer-ui');
                 this.gunModel = document.querySelector('#gun-model');
-                this.bulletLine = document.querySelector('#bullet-line');
+                this.thickLaser = document.querySelector('#thick-laser');
                 this.sys = this.el.components['dystopian-system'];
                 this.audioCtx = null;
                 this.gunVisibleTimer = 0;
@@ -228,7 +249,7 @@
                 }
 
                 if (isGround && isGunPose) {
-                    this.gunVisibleTimer = 0.3; 
+                    this.gunVisibleTimer = 0.3; // Sustain visibility naturally
                 } else {
                     this.gunVisibleTimer -= dt * 0.001;
                 }
@@ -242,6 +263,12 @@
                 }
             },
             fireGun: function() {
+                // Keep the gun forcefully visible during and slightly after the shot
+                this.gunVisibleTimer = 0.5;
+                
+                // Recoil animation
+                this.gunModel.setAttribute('animation__recoil', 'property: rotation; from: 30 0 0; to: 15 0 0; dur: 150; easing: easeOutQuad');
+
                 this.playPewSound();
 
                 let closestCit = null;
@@ -283,10 +310,19 @@
                     closestCit.object3D.getWorldPosition(targetPos);
                     targetPos.y += 1.0; 
 
-                    this.bulletLine.setAttribute('line', `start: ${handPos.x} ${handPos.y} ${handPos.z}; end: ${targetPos.x} ${targetPos.y} ${targetPos.z}; color: #ff0000; visible: true`);
+                    // Render Thick Laser Ray using Math
+                    const distance = handPos.distanceTo(targetPos);
+                    const midPoint = new THREE.Vector3().addVectors(handPos, targetPos).multiplyScalar(0.5);
+                    
+                    this.thickLaser.setAttribute('position', midPoint);
+                    this.thickLaser.setAttribute('height', distance);
+                    this.thickLaser.object3D.lookAt(targetPos);
+                    this.thickLaser.object3D.rotateX(Math.PI / 2); // Align cylinder
+                    
+                    this.thickLaser.setAttribute('visible', 'true');
                     this.playHitSound();
 
-                    setTimeout(() => { this.bulletLine.setAttribute('line', 'visible: false'); }, 60);
+                    setTimeout(() => { this.thickLaser.setAttribute('visible', 'false'); }, 150);
                 }
             },
             playPewSound: function() {
@@ -296,9 +332,9 @@
                 const gain = this.audioCtx.createGain();
                 osc.connect(gain); gain.connect(this.audioCtx.destination);
                 osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(900, this.audioCtx.currentTime);
+                osc.frequency.setValueAtTime(1200, this.audioCtx.currentTime);
                 osc.frequency.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + 0.15);
-                gain.gain.setValueAtTime(0.6, this.audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.8, this.audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + 0.15);
                 osc.start(); osc.stop(this.audioCtx.currentTime + 0.15);
             },
@@ -309,7 +345,7 @@
                 osc.type = 'square';
                 osc.frequency.setValueAtTime(100, this.audioCtx.currentTime);
                 osc.frequency.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + 0.1);
-                gain.gain.setValueAtTime(0.9, this.audioCtx.currentTime);
+                gain.gain.setValueAtTime(1.0, this.audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + 0.1);
                 osc.start(); osc.stop(this.audioCtx.currentTime + 0.1);
             }
@@ -320,36 +356,32 @@
                 const scene = this.el;
                 const sys = scene.components['dystopian-system'];
 
-                // 1. MEGA TOWER GENERATOR
-                for (let i = 0; i < 550; i++) {
+                // OPTIMIZED MEGA TOWERS (Reduced count, bigger size for extreme FPS and dense look)
+                for (let i = 0; i < 250; i++) {
                     const x = (Math.random() - 0.5) * 1800;
                     const z = (Math.random() - 0.5) * 1800;
                     
-                    // Reduced exclusion zone so buildings crowd the spawn area tightly
-                    const distFromCenter = Math.hypot(x, z - 20);
-                    if (distFromCenter < 50) continue; 
+                    if (Math.hypot(x, z - 20) < 50) continue; 
                     
                     const tower = document.createElement('a-entity');
                     tower.setAttribute('position', `${x} 0 ${z}`);
                     
                     const isRusty = Math.random() > 0.8;
                     const hue = isRusty ? Math.random() * 40 : 190 + Math.random() * 50;
-                    const sat = 15 + Math.random() * 25;
-                    const lit = 8 + Math.random() * 25; 
-                    const bColor = `hsl(${hue}, ${sat}%, ${lit}%)`;
+                    const bColor = `hsl(${hue}, ${15 + Math.random() * 25}%, ${15 + Math.random() * 20}%)`;
 
-                    const tiers = Math.floor(Math.random() * 4) + 1;
+                    const tiers = Math.floor(Math.random() * 3) + 1;
                     let currentY = 0;
-                    let currentW = 20 + Math.random() * 35;
+                    let currentW = 35 + Math.random() * 45; // Wider buildings
                     let currentD = currentW * (0.8 + Math.random() * 0.4);
                     
                     for(let t = 0; t < tiers; t++) {
-                        const tierH = 80 + Math.random() * 180;
+                        const tierH = 100 + Math.random() * 200;
                         const isCyl = Math.random() > 0.85 && t > 0;
                         
                         const part = document.createElement(isCyl ? 'a-cylinder' : 'a-box');
                         part.setAttribute('color', bColor);
-                        part.setAttribute('material', 'metalness: 0.8; roughness: 0.35');
+                        part.setAttribute('material', 'metalness: 0.7; roughness: 0.4');
                         
                         if(isCyl) {
                             part.setAttribute('radius', currentW / 2);
@@ -362,104 +394,52 @@
                         part.setAttribute('position', `0 ${currentY + tierH/2} 0`);
                         tower.appendChild(part);
 
-                        // Structural Ribs / Metal Plates (Oversized to prevent Z-fighting)
                         if (!isCyl) {
-                            const ribCount = Math.floor(tierH / 30);
+                            const ribCount = Math.floor(tierH / 40);
                             for(let r=0; r<ribCount; r++) {
                                 const plate = document.createElement('a-box');
-                                // Oversize width/depth by 0.5 to stop z-fighting completely
-                                plate.setAttribute('width', currentW + 0.5); 
-                                plate.setAttribute('height', 1.5 + Math.random() * 3); 
-                                plate.setAttribute('depth', currentD + 0.5);
-                                plate.setAttribute('position', `0 ${currentY + (r * 30) + 15} 0`);
-                                plate.setAttribute('color', '#151515');
-                                plate.setAttribute('material', 'metalness: 0.95; roughness: 0.2');
+                                plate.setAttribute('width', currentW + 1.0); 
+                                plate.setAttribute('height', 2 + Math.random() * 3); 
+                                plate.setAttribute('depth', currentD + 1.0);
+                                plate.setAttribute('position', `0 ${currentY + (r * 40) + 20} 0`);
+                                plate.setAttribute('color', '#1c1c1c');
+                                plate.setAttribute('material', 'metalness: 0.9; roughness: 0.2');
                                 tower.appendChild(plate);
                             }
-
-                            // Vents / AC Units attached to the side
-                            const ventCount = Math.floor(Math.random() * 5);
-                            for (let v=0; v<ventCount; v++) {
-                                const vent = document.createElement('a-box');
-                                vent.setAttribute('width', 2); vent.setAttribute('height', 3); vent.setAttribute('depth', 2);
-                                const sideX = Math.random() > 0.5 ? (currentW/2 + 0.5) : -(currentW/2 + 0.5);
-                                vent.setAttribute('position', `${sideX} ${currentY + Math.random() * tierH} 0`);
-                                vent.setAttribute('color', '#0a0a0a');
-                                tower.appendChild(vent);
-                            }
                             
-                            // Neon Accents
-                            if (Math.random() > 0.7) {
+                            if (Math.random() > 0.6) {
                                 const neon = document.createElement('a-box');
-                                neon.setAttribute('width', 0.8); neon.setAttribute('height', tierH * 0.6); neon.setAttribute('depth', currentD + 1.0);
+                                neon.setAttribute('width', 1.0); neon.setAttribute('height', tierH * 0.7); neon.setAttribute('depth', currentD + 1.5);
                                 neon.setAttribute('position', `0 ${currentY + tierH/2} 0`);
-                                neon.setAttribute('material', `shader: flat; color: ${Math.random() > 0.5 ? '#ff1111' : '#1111ff'}`);
+                                neon.setAttribute('material', `shader: flat; color: ${Math.random() > 0.5 ? '#ff2222' : '#2222ff'}`);
                                 tower.appendChild(neon);
                             }
                         }
-
                         currentY += tierH;
                         currentW *= (0.6 + Math.random() * 0.3); 
                         currentD *= (0.6 + Math.random() * 0.3);
                     }
-
-                    // Vertical Industrial Pipes (Oversized placement)
-                    const pipeCount = Math.floor(Math.random() * 4) + 1;
-                    for(let j=0; j<pipeCount; j++) {
-                        const pipe = document.createElement('a-cylinder');
-                        pipe.setAttribute('radius', '0.8'); pipe.setAttribute('height', currentY);
-                        // Place pipes slightly outside the main box boundary to avoid clipping
-                        const px = (j%2 === 0) ? (currentW/2 + 1.2) : -(currentW/2 + 1.2);
-                        const pz = (j < 2) ? (currentD/2 + 1.2) : -(currentD/2 + 1.2);
-                        pipe.setAttribute('position', `${px} ${currentY/2} ${pz}`);
-                        pipe.setAttribute('color', '#080808');
-                        pipe.setAttribute('material', 'metalness: 0.9; roughness: 0.4');
-                        tower.appendChild(pipe);
-                    }
                     scene.appendChild(tower);
                 }
 
-                // 2. ULTRA DENSE SLUMS
-                for (let i = 0; i < 1500; i++) {
+                // OPTIMIZED DENSE SLUMS
+                for (let i = 0; i < 600; i++) {
                     const x = (Math.random() - 0.5) * 1200;
                     const z = (Math.random() - 0.5) * 1200;
                     if (Math.hypot(x, z - 20) < 45) continue; 
                     const slum = document.createElement('a-box');
-                    const sw = 6 + Math.random() * 16;
-                    const sh = 1.5 + Math.random() * 6;
-                    const sd = 6 + Math.random() * 16;
+                    const sw = 12 + Math.random() * 25; // Bigger modules cover more ground efficiently
+                    const sh = 1.5 + Math.random() * 8;
+                    const sd = 12 + Math.random() * 25;
                     slum.setAttribute('width', sw); slum.setAttribute('height', sh); slum.setAttribute('depth', sd);
                     slum.setAttribute('position', `${x} ${sh/2} ${z}`);
-                    slum.setAttribute('color', `hsl(${25+Math.random()*25}, 15%, ${12+Math.random()*15}%)`);
-                    slum.setAttribute('material', 'metalness: 0.5; roughness: 0.7');
+                    slum.setAttribute('color', `hsl(${25+Math.random()*25}, 15%, ${15+Math.random()*20}%)`);
+                    slum.setAttribute('material', 'metalness: 0.4; roughness: 0.8');
                     scene.appendChild(slum);
                 }
 
-                // 3. GROUND PIPES AND DETAILS
-                for (let i = 0; i < 300; i++) {
-                    const pipe = document.createElement('a-cylinder');
-                    pipe.setAttribute('radius', 0.4 + Math.random() * 0.8); 
-                    pipe.setAttribute('height', 15 + Math.random() * 30);
-                    pipe.setAttribute('rotation', '90 0 90');
-                    pipe.setAttribute('position', `${(Math.random()-0.5)*800} 0.5 ${(Math.random()-0.5)*800}`);
-                    pipe.setAttribute('color', '#111');
-                    pipe.setAttribute('material', 'metalness: 0.9; roughness: 0.3');
-                    scene.appendChild(pipe);
-                }
-
-                // 4. THUNDERING CLOUDS
-                for (let i = 0; i < 45; i++) {
-                    const cloud = document.createElement('a-icosahedron');
-                    cloud.setAttribute('radius', '70');
-                    cloud.setAttribute('scale', '3 0.4 2');
-                    cloud.setAttribute('position', `${(Math.random()-0.5)*1500} ${400 + Math.random()*150} ${(Math.random()-0.5)*1500}`);
-                    cloud.setAttribute('color', '#050505');
-                    cloud.setAttribute('material', 'flatShading: true; roughness: 1');
-                    scene.appendChild(cloud);
-                }
-
-                // 5. INTERESTING CYBORG CITIZENS
-                for (let i = 0; i < 500; i++) {
+                // INTERESTING CYBORG CITIZENS
+                for (let i = 0; i < 200; i++) {
                     const cit = document.createElement('a-entity');
                     cit.setAttribute('position', `${(Math.random()-0.5)*400} 0 ${(Math.random()-0.5)*600}`);
                     
@@ -491,41 +471,38 @@
         finger-locomotion 
         combat-system
         realistic-world-gen 
-        fog="type: exponential; color: #0a0a10; density: 0.0035"
-        background="color: #020202">
+        fog="type: exponential; color: #0d0d16; density: 0.0025"
+        background="color: #040404">
         
-        <!-- Brightened Environment Base Lighting -->
-        <a-light type="ambient" color="#2a2a35" intensity="0.6"></a-light>
-        <a-light type="directional" color="#ff3311" position="-1 0.8 -1" intensity="2.2"></a-light>
+        <!-- Much Brighter Base Lighting for Visibility -->
+        <a-light type="ambient" color="#3a3a4a" intensity="0.9"></a-light>
+        <a-light type="directional" color="#ff4422" position="-1 0.8 -1" intensity="2.5"></a-light>
         
-        <!-- GLOBAL THUNDER FLASH (Ambient to instantly light up the whole city) -->
+        <!-- GLOBAL THUNDER FLASH -->
         <a-light id="thunder-light" type="ambient" color="#ddefaa" intensity="0"></a-light>
 
-        <!-- Dynamic Bullet Tracer -->
-        <a-entity id="bullet-line" line="color: #ff0000; visible: false" position="0 0 0"></a-entity>
+        <!-- DYNAMIC THICK LASER (Replaces 1px line) -->
+        <a-cylinder id="thick-laser" radius="0.08" color="#ff0000" material="shader: flat; transparent: true; opacity: 0.9" visible="false"></a-cylinder>
 
-        <a-plane rotation="-90 0 0" width="5000" height="5000" color="#0a0a0a" material="roughness: 0.6; metalness: 0.3"></a-plane>
+        <a-plane rotation="-90 0 0" width="5000" height="5000" color="#0c0c0c" material="roughness: 0.5; metalness: 0.4"></a-plane>
         
         <!-- Platform -->
-        <a-box position="0 5 40" width="40" height="10" depth="40" color="#111115" material="metalness: 0.8; roughness: 0.4"></a-box>
+        <a-box position="0 5 40" width="40" height="10" depth="40" color="#18181c" material="metalness: 0.7; roughness: 0.3"></a-box>
 
-        <!-- START SIGN (Forced Monoid Font everywhere) -->
-        <a-entity position="0 11.5 35">
-            <a-plane width="9" height="4" color="#050505" material="opacity: 0.85; transparent: true; shader: flat; side: double" position="0 0 -0.05"></a-plane>
-            <a-plane width="9.1" height="4.1" color="#ff0000" material="opacity: 0.4; transparent: true; shader: flat; side: double" position="0 0 -0.06"></a-plane>
-            <a-text value="HEIL MISTER" font="monoid" position="0 1.2 0" align="center" color="#ff2222" scale="2.5 2.5 2.5"></a-text>
-            <a-text value="Sector 4 - Hyper-Dense Dystopian Megacity\nWelcome, Citizen. The Monolith sees all." font="monoid" position="0 0.3 0" align="center" color="#aaaaaa" scale="0.9 0.9 0.9"></a-text>
-            <a-text value="MOVEMENT:\n[ LEFT ] Point to glide.  [ RIGHT ] Tilt to throttle.\n\nCOMBAT:\n[ ON GROUND ] Make 'Gun' sign. Pinch to execute in vision." font="monoid" position="0 -0.8 0" align="center" color="#00ffaa" scale="0.8 0.8 0.8" line-height="50"></a-text>
+        <!-- UPDATED START SIGN -->
+        <a-entity position="0 13 35">
+            <a-plane width="9.5" height="4.5" color="#050505" material="opacity: 0.9; transparent: true; shader: flat; side: double" position="0 0 -0.05"></a-plane>
+            <a-plane width="9.6" height="4.6" color="#ff0000" material="opacity: 0.4; transparent: true; shader: flat; side: double" position="0 0 -0.06"></a-plane>
+            <a-text value="HEIL MASTER" font="monoid" position="0 1.4 0" align="center" color="#ff2222" scale="3 3 3"></a-text>
+            <a-text value="Welcome Dictator. The Monolith sees all." font="monoid" position="0 0.5 0" align="center" color="#aaaaaa" scale="1.2 1.2 1.2"></a-text>
+            <a-text value="MOVEMENT:\n[ LEFT HAND ] Point index \n finger to glide.\n[ RIGHT HAND ] Tilt palm \n left/right to adjust speed." font="monoid" position="-3 -0.8 0" align="left" color="#00ffaa" scale="0.9 0.9 0.9" line-height="50"></a-text>
+            <a-text value="COMBAT:\n[ ON GROUND ] Make 'Gun' \n sign. Pinch to execute." font="monoid" position="0.8 -0.55 0" align="left" color="#00ffaa" scale="0.9 0.9 0.9" line-height="50"></a-text>
         </a-entity>
 
         <!-- MONOLITH -->
         <a-entity position="0 0 -50">
-            <a-box width="24" height="120" depth="24" position="0 60 0" color="#050505" material="metalness: 0.9; roughness: 0.15"></a-box>
-            <!-- Visor -->
+            <a-box width="24" height="120" depth="24" position="0 60 0" color="#080808" material="metalness: 0.9; roughness: 0.1"></a-box>
             <a-box width="12" height="2" depth="2" position="0 110 12.1" material="shader: flat; color: #f00"></a-box>
-            <!-- Monolith detail pipes -->
-            <a-cylinder radius="1.2" height="120" position="12.5 60 12.5" color="#111" material="metalness: 0.9"></a-cylinder>
-            <a-cylinder radius="1.2" height="120" position="-12.5 60 12.5" color="#111" material="metalness: 0.9"></a-cylinder>
         </a-entity>
 
         <!-- PLAYER RIG -->
@@ -536,21 +513,22 @@
             
             <a-entity id="right-hand" hand-tracking-controls="hand: right; modelStyle: mesh; modelColor: #000;">
                 
-                <!-- VISIBLE SPEEDOMETER UI -->
-                <a-entity id="speedometer-ui" position="0 0.08 0.05" rotation="-90 0 0">
-                    <a-ring id="speed-ring" radius-inner="0.035" radius-outer="0.045" material="color: #00ff00; shader: flat; side: double" geometry="thetaLength: 90"></a-ring>
-                    <a-ring radius-inner="0.046" radius-outer="0.048" material="color: #333; shader: flat; side: double"></a-ring>
-                    <a-text id="speed-text" value="1.0x" font="monoid" align="center" position="0 0 0.01" scale="0.12 0.12 0.12" color="#ffffff"></a-text>
-                    <a-text value="SPD" font="monoid" align="center" position="0 -0.05 0.01" scale="0.06 0.06 0.06" color="#aaaaaa"></a-text>
+                <!-- VISUAL SPEEDOMETER HUD (Clear floating panel) -->
+                <a-entity id="speedometer-ui" position="-0.08 0.1 0" rotation="-30 0 0">
+                    <a-plane width="0.2" height="0.1" color="#050505" material="opacity: 0.8; transparent: true"></a-plane>
+                    <!-- Background bar track -->
+                    <a-plane width="0.16" height="0.015" position="0 0 0.001" color="#222"></a-plane>
+                    <!-- Dynamic fill bar -->
+                    <a-plane id="speed-bar" width="0.04" height="0.015" position="-0.06 0 0.002" color="#00ffaa"></a-plane>
+                    
+                    <a-text id="speed-text" value="1.0x" font="monoid" align="center" position="0 0.03 0.001" scale="0.15 0.15 0.15" color="#ffffff"></a-text>
+                    <a-text value="THROTTLE" font="monoid" align="center" position="0 -0.03 0.001" scale="0.08 0.08 0.08" color="#aaaaaa"></a-text>
                 </a-entity>
 
-                <!-- VISIBLE HOLOGRAPHIC GUN -->
-                <a-entity id="gun-model" visible="false" position="0 0.05 -0.1">
-                    <!-- Gun Barrel -->
+                <!-- VISIBLE HOLOGRAPHIC GUN (Has recoil animation on fire) -->
+                <a-entity id="gun-model" visible="false" position="0 0.05 -0.1" rotation="15 0 0">
                     <a-box width="0.04" height="0.04" depth="0.25" position="0 0 0" color="#222" material="metalness: 0.95; roughness: 0.1"></a-box>
-                    <!-- Energy Rails -->
                     <a-box width="0.042" height="0.01" depth="0.22" position="0 0.02 0" material="shader: flat; color: #ff0000; transparent: true; opacity: 0.9"></a-box>
-                    <!-- Gun Handle -->
                     <a-box width="0.035" height="0.12" depth="0.04" position="0 -0.06 0.08" rotation="15 0 0" color="#050505" material="metalness: 0.6"></a-box>
                 </a-entity>
 
