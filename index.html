@@ -1,115 +1,221 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <title>VR Pinch & Pull Locomotion</title>
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-    <script src="https://unpkg.com/aframe-environment-component@1.3.2/dist/aframe-environment-component.min.js"></script>
+<head>
+  <meta charset="utf-8">
+  <title>Operator's VR Finger-Walker</title>
+  <!-- A-Frame 1.5.0 for stable WebXR hand tracking -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <!-- Environment component -->
+  <script src="https://unpkg.com/aframe-environment-component@1.3.3/dist/aframe-environment-component.min.js"></script>
+  <script>
+    // Oscillate component for floating geometry
+    AFRAME.registerComponent('oscillate', {
+      schema: {
+        speed: {type: 'number', default: 1},
+        amount: {type: 'number', default: 0.5},
+        offset: {type: 'number', default: 0}
+      },
+      init: function() { 
+        this.baseY = this.el.object3D.position.y; 
+      },
+      tick: function(time) {
+        this.el.object3D.position.y = this.baseY + Math.sin(time / 1000 * this.data.speed + this.data.offset) * this.data.amount;
+      }
+    });
 
-    <script>
-      AFRAME.registerComponent('pinch-locomotion', {
-        schema: {
-          rigId: { type: 'string', default: '#rig' },
-          speed: { type: 'number', default: 1.5 }, // Sensitivity of the pull
-          feedbackColor: { type: 'color', default: '#00FFFF' }
-        },
+    // Finger Walking Locomotion
+    AFRAME.registerComponent('finger-walking', {
+      schema: {
+        rig: { type: 'selector', default: '#rig' },
+        hudState: { type: 'selector', default: '#hud-state' },
+        hudSpd: { type: 'selector', default: '#hud-spd' }
+      },
 
-        init: function () {
-          this.rig = document.querySelector(this.data.rigId);
-          this.isPinching = false;
-          
-          // Internal State
-          this.initialHandPos = new THREE.Vector3();
-          this.currentHandPos = new THREE.Vector3();
-          this.delta = new THREE.Vector3();
-          
-          // Bind Hand Events
-          this.el.addEventListener('pinchstarted', (evt) => this.onPinchStart(evt));
-          this.el.addEventListener('pinchended', (evt) => this.onPinchEnd(evt));
-          
-          // Visual Feedback: Create a small glowing spark at the pinch point
-          this.feedbackOrb = document.createElement('a-sphere');
-          this.feedbackOrb.setAttribute('radius', '0.02');
-          this.feedbackOrb.setAttribute('color', this.data.feedbackColor);
-          this.feedbackOrb.setAttribute('material', 'emissive', this.data.feedbackColor);
-          this.feedbackOrb.setAttribute('visible', 'false');
-          this.el.appendChild(this.feedbackOrb);
-        },
+      init: function () {
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.moveDirection = new THREE.Vector3();
+        
+        // Step tracking
+        this.lastFingerDistances = { index: 0, middle: 0 };
+        this.fingerState = { index: 'UP', middle: 'UP' };
+        this.stepCount = 0;
+        this.impulsePower = 1.2; // How much "push" each step gives
+        this.friction = 0.95;    // Slow down over time
+        
+        this.updateHUD('READY\nWalk fingers on left hand');
+      },
 
-        onPinchStart: function (evt) {
-          this.isPinching = true;
-          // Record the world position where the pinch started
-          this.initialHandPos.copy(evt.detail.position);
-          
-          // Show visual feedback at the hand
-          this.feedbackOrb.setAttribute('visible', 'true');
-          this.feedbackOrb.setAttribute('position', this.el.object3D.worldToLocal(this.initialHandPos.clone()));
-        },
-
-        onPinchEnd: function () {
-          this.isPinching = false;
-          this.feedbackOrb.setAttribute('visible', 'false');
-        },
-
-        tick: function (time, delta) {
-          if (!this.isPinching) return;
-
-          // Get the current position of the hand in world space
-          this.el.object3D.getWorldPosition(this.currentHandPos);
-
-          // Calculate how far the hand has moved since the pinch started
-          // Movement = Initial - Current (to pull the world toward you)
-          this.delta.subVectors(this.initialHandPos, this.currentHandPos);
-
-          // Apply locomotion to the rig
-          const rigPos = this.rig.getAttribute('position');
-          rigPos.x += this.delta.x * this.data.speed;
-          rigPos.y += this.delta.y * this.data.speed; // Allows vertical swimming/climbing
-          rigPos.z += this.delta.z * this.data.speed;
-          
-          this.rig.setAttribute('position', rigPos);
-
-          // Update the "anchor" so the movement is continuous and smooth
-          this.initialHandPos.copy(this.currentHandPos);
-          
-          // Pulse the feedback orb based on movement speed
-          const pulse = 0.5 + Math.sin(time / 100) * 0.5;
-          this.feedbackOrb.setAttribute('material', 'emissiveIntensity', 1 + pulse);
+      updateHUD: function(text, color = '#00ffff') {
+        if (this.data.hudState) {
+          this.data.hudState.setAttribute('value', text);
+          this.data.hudState.setAttribute('color', color);
         }
-      });
-    </script>
-  </head>
-  <body>
-    <a-scene webxr="optionalFeatures: hand-tracking">
-      
-      <a-assets>
-        <a-mixin id="monolith" geometry="primitive: box; width: 2; height: 10; depth: 2" material="color: #333; metalness: 0.8; roughness: 0.2"></a-mixin>
-      </a-assets>
+      },
 
-      <a-entity environment="preset: starry; grid: dots; groundColor: #111; gridColor: #444"></a-entity>
+      tick: function (time, timeDelta) {
+        const dt = timeDelta / 1000;
+        if (dt === 0) return;
 
-      <a-entity mixin="monolith" position="-10 5 -15" material="color: #ff4444"></a-entity>
-      <a-entity mixin="monolith" position="10 5 -15" material="color: #44ff44"></a-entity>
-      <a-entity mixin="monolith" position="0 5 -25" material="color: #4444ff"></a-entity>
+        const sceneEl = this.el.sceneEl;
+        if (!sceneEl.is('vr-mode')) return;
 
-      <a-entity id="rig" position="0 0 0">
-        <a-entity id="camera" camera look-controls position="0 1.6 0">
-          <a-text value="PINCH AND PULL AIR TO MOVE" 
-                  position="0 0.4 -1" align="center" width="1.2" color="#00FFFF">
+        const frame = sceneEl.frame;
+        const session = sceneEl.renderer.xr.getSession();
+        const refSpace = sceneEl.renderer.xr.getReferenceSpace();
+
+        if (!frame || !session) return;
+
+        // Find Left Hand for locomotion
+        let leftHandSource = null;
+        for (let source of session.inputSources) {
+          if (source.hand && source.handedness === 'left') {
+            leftHandSource = source;
+            break;
+          }
+        }
+
+        if (leftHandSource) {
+          const wrist = frame.getJointPose(leftHandSource.hand.get('wrist'), refSpace);
+          const indexTip = frame.getJointPose(leftHandSource.hand.get('index-finger-tip'), refSpace);
+          const middleTip = frame.getJointPose(leftHandSource.hand.get('middle-finger-tip'), refSpace);
+
+          if (wrist && indexTip && middleTip) {
+            // 1. Determine Direction: Based on the vector from wrist to index tip (pointing direction)
+            this.moveDirection.set(
+              indexTip.transform.position.x - wrist.transform.position.x,
+              indexTip.transform.position.y - wrist.transform.position.y,
+              indexTip.transform.position.z - wrist.transform.position.z
+            ).normalize();
+
+            // 2. Detect Steps (Finger Walking)
+            // We measure distance from tip to wrist. A "step" is a rapid contraction and extension.
+            const getDist = (pose) => {
+              const dx = pose.transform.position.x - wrist.transform.position.x;
+              const dy = pose.transform.position.y - wrist.transform.position.y;
+              const dz = pose.transform.position.z - wrist.transform.position.z;
+              return Math.sqrt(dx*dx + dy*dy + dz*dz);
+            };
+
+            const dIdx = getDist(indexTip);
+            const dMid = getDist(middleTip);
+
+            // Simple threshold-based step detection
+            // When finger moves from "Extended" (>0.12m) to "Curled" (<0.08m)
+            const checkStep = (currentDist, lastDist, key) => {
+              if (currentDist < 0.09 && this.fingerState[key] === 'UP') {
+                this.fingerState[key] = 'DOWN';
+                return true; // Step triggered
+              } else if (currentDist > 0.12) {
+                this.fingerState[key] = 'UP';
+              }
+              return false;
+            };
+
+            const indexStep = checkStep(dIdx, this.lastFingerDistances.index, 'index');
+            const middleStep = checkStep(dMid, this.lastFingerDistances.middle, 'middle');
+
+            if (indexStep || middleStep) {
+              // Add impulse in the direction the hand is pointing
+              this.velocity.addScaledVector(this.moveDirection, this.impulsePower);
+              this.updateHUD('STEP DETECTED', '#00ffaa');
+            } else {
+              this.updateHUD('LEFT HAND ACTIVE\nWalk fingers to move');
+            }
+
+            this.lastFingerDistances.index = dIdx;
+            this.lastFingerDistances.middle = dMid;
+          }
+        } else {
+          this.updateHUD('WAITING FOR LEFT HAND...', '#ff3333');
+        }
+
+        // Apply movement physics
+        this.velocity.multiplyScalar(this.friction); // Constant deceleration
+        
+        // Cap max speed
+        if (this.velocity.length() > 10) this.velocity.normalize().multiplyScalar(10);
+
+        // Update Rig position
+        const rigPos = this.data.rig.object3D.position;
+        rigPos.x += this.velocity.x * dt;
+        rigPos.y += this.velocity.y * dt;
+        rigPos.z += this.velocity.z * dt;
+
+        // Ground constraint
+        if (rigPos.y < 0) {
+          rigPos.y = 0;
+          if (this.velocity.y < 0) this.velocity.y = 0;
+        }
+
+        // Telemetry
+        if (this.data.hudSpd) {
+          this.data.hudSpd.setAttribute('value', `SPD\n${this.velocity.length().toFixed(1)}m/s`);
+        }
+      }
+    });
+  </script>
+</head>
+<body>
+  <a-scene webxr="optionalFeatures: hand-tracking;" finger-walking background="color: #000000">
+    
+    <!-- Environment -->
+    <a-entity environment="preset: logic; groundColor: #050510; grid: 1x1; dressingAmount: 40; dressingColor: #00ffff"></a-entity>
+
+    <!-- Floating Exploration Zones -->
+    <a-entity position="0 2 -8" oscillate="speed: 1; amount: 0.5">
+      <a-box width="4" depth="4" height="0.2" color="#111">
+        <a-box width="4.2" depth="4.2" height="0.1" color="#00ffff" wireframe="true"></a-box>
+      </a-box>
+      <a-text value="STATION ALPHA" align="center" position="0 1 0" side="double" color="#00ffff"></a-text>
+    </a-entity>
+
+    <a-entity position="10 6 -15" oscillate="speed: 0.7; amount: 1; offset: 1">
+      <a-cylinder radius="3" height="0.2" segments-radial="8" color="#111">
+        <a-cylinder radius="3.1" height="0.1" segments-radial="8" color="#ff00ff" wireframe="true"></a-cylinder>
+      </a-cylinder>
+      <a-torus-knot radius="1" tube="0.05" color="#ff00ff" position="0 2 0" animation="property: rotation; to: 0 360 360; loop: true; dur: 5000"></a-torus-knot>
+    </a-entity>
+
+    <a-entity position="-12 4 -20" oscillate="speed: 1.2; amount: 0.3; offset: 2">
+      <a-octahedron radius="4" color="#111" opacity="0.8">
+        <a-octahedron radius="4.1" color="#00ffaa" wireframe="true"></a-octahedron>
+      </a-octahedron>
+    </a-entity>
+
+    <!-- Player Rig -->
+    <a-entity id="rig" position="0 0 0">
+      <a-camera id="head" position="0 1.6 0">
+        <!-- Tactical HUD -->
+        <a-entity id="hud-container" position="0 0 -0.8">
+          <a-ring color="#00ffff" radius-inner="0.03" radius-outer="0.032" opacity="0.4"></a-ring>
+          
+          <a-text id="hud-spd" 
+                  position="-0.5 0.1 0" 
+                  value="SPD\n0.0m/s" 
+                  align="center" 
+                  width="1" 
+                  color="#00ffff" 
+                  font="monoid">
           </a-text>
-        </a-entity>
 
-        <a-entity id="leftHand" 
-                  hand-tracking-controls="hand: left" 
-                  pinch-locomotion="rigId: #rig; speed: 1.2; feedbackColor: #FF00FF">
-        </a-entity>
+          <a-text id="hud-state" 
+                  position="0 -0.3 0" 
+                  value="SYSTEM BOOTING" 
+                  align="center" 
+                  width="0.8" 
+                  color="#00ffff" 
+                  font="monoid">
+          </a-text>
 
-        <a-entity id="rightHand" 
-                  hand-tracking-controls="hand: right" 
-                  pinch-locomotion="rigId: #rig; speed: 1.2; feedbackColor: #00FFFF">
+          <a-entity line="start: -0.3 -0.25 0; end: 0.3 -0.25 0; color: #00ffff; opacity: 0.2"></a-entity>
         </a-entity>
-      </a-entity>
+      </a-camera>
 
-    </a-scene>
-  </body>
+      <!-- Hands -->
+      <a-entity id="leftHand" hand-tracking-controls="hand: left; modelColor: #00ffff;"></a-entity>
+      <a-entity id="rightHand" hand-tracking-controls="hand: right; modelColor: #00ffff;"></a-entity>
+    </a-entity>
+
+  </a-scene>
+</body>
 </html>
