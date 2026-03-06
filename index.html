@@ -3,358 +3,259 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Dystopian Megacity VR</title>
-    <!-- A-Frame 1.6.0 -->
+    <title>Hyper-Dense Dystopian Megacity</title>
     <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
     <script>
-        // CORE LOCOMOTION SYSTEM (Untouched for perfect stability)
-        AFRAME.registerComponent('finger-locomotion', {
-            schema: {
-                speed: { type: 'number', default: 0.18 },
-                threshold: { type: 'number', default: 0.035 },
-                rig: { type: 'selector', default: '#rig' }
+        // GLOBAL ANIMATION SYSTEM
+        AFRAME.registerComponent('dystopian-system', {
+            init: function() {
+                this.drones = [];
+                this.citizens = [];
+                this.particles = [];
+                this.time = 0;
             },
-            
+            registerDrone: function(el) { this.drones.push(el); },
+            registerCitizen: function(el) { this.citizens.push(el); },
+            registerParticle: function(el) { this.particles.push(el); },
+
+            tick: function(t, dt) {
+                this.time += dt * 0.001;
+                
+                this.drones.forEach((d, i) => {
+                    const offset = i * 2;
+                    d.object3D.position.x += Math.cos(this.time + offset) * 0.08;
+                    d.object3D.position.z += Math.sin(this.time + offset) * 0.08;
+                });
+
+                this.citizens.forEach((c, i) => {
+                    const speed = 0.015 + (i % 8) * 0.004;
+                    c.object3D.position.z -= speed;
+                    if (c.object3D.position.z < -300) c.object3D.position.z = 300;
+                });
+
+                this.particles.forEach((p) => {
+                    p.object3D.position.x -= 0.8;
+                    if (p.object3D.position.x < -500) p.object3D.position.x = 500;
+                });
+            }
+        });
+
+        // LOCOMOTION WITH FLOOR COLLISION
+        AFRAME.registerComponent('finger-locomotion', {
+            schema: { speed: { type: 'number', default: 0.25 }, threshold: { type: 'number', default: 0.035 }, rig: { type: 'selector', default: '#rig' } },
             init: function() {
                 this.vector = new THREE.Vector3();
                 this.worldVector = new THREE.Vector3();
                 this.proximalPos = new THREE.Vector3();
                 this.tipPos = new THREE.Vector3();
-                this.arrowPos = new THREE.Vector3();
                 this.lookAtPos = new THREE.Vector3();
                 this.arrow = document.querySelector('#movement-arrow');
             },
-
             tick: function() {
-                const sceneEl = this.el;
-                const frame = sceneEl.frame;
-                if (!frame) return;
-
-                const xr = sceneEl.renderer.xr;
+                const xr = this.el.renderer.xr;
                 const session = xr.getSession();
                 if (!session) return;
-
+                const frame = this.el.frame;
                 const refSpace = xr.getReferenceSpace();
-                if (!refSpace) return;
+                let hand = null;
+                for (let s of session.inputSources) if (s.handedness === 'left' && s.hand) hand = s;
+                if (!hand) { this.stop(); return; }
 
-                let leftHandSource = null;
-                for (let i = 0; i < session.inputSources.length; i++) {
-                    const source = session.inputSources[i];
-                    if (source.handedness === 'left' && source.hand) {
-                        leftHandSource = source;
-                        break;
-                    }
-                }
+                const pJoint = hand.hand.get('index-finger-phalanx-proximal');
+                const tJoint = hand.hand.get('index-finger-tip');
+                const pPose = frame.getJointPose(pJoint, refSpace);
+                const tPose = frame.getJointPose(tJoint, refSpace);
 
-                if (!leftHandSource) {
-                    this.stopMovement();
-                    return;
-                }
-
-                const proximalJoint = leftHandSource.hand.get('index-finger-phalanx-proximal');
-                const tipJoint = leftHandSource.hand.get('index-finger-tip');
-
-                if (!proximalJoint || !tipJoint) {
-                    this.stopMovement();
-                    return;
-                }
-
-                const proximalPose = frame.getJointPose(proximalJoint, refSpace);
-                const tipPose = frame.getJointPose(tipJoint, refSpace);
-
-                if (!proximalPose || !tipPose) {
-                    this.stopMovement();
-                    return;
-                }
-
-                this.proximalPos.set(proximalPose.transform.position.x, proximalPose.transform.position.y, proximalPose.transform.position.z);
-                this.tipPos.set(tipPose.transform.position.x, tipPose.transform.position.y, tipPose.transform.position.z);
-
-                const distance = this.proximalPos.distanceTo(this.tipPos);
-
-                if (distance > this.data.threshold) {
-                    this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
-
-                    if (this.data.rig) {
-                        this.worldVector.copy(this.vector);
-                        this.worldVector.applyQuaternion(this.data.rig.object3D.quaternion);
-                        this.worldVector.multiplyScalar(this.data.speed);
-                        this.data.rig.object3D.position.add(this.worldVector);
-                    }
-                    this.updateArrow(this.tipPos, this.vector);
-                } else {
-                    this.stopMovement();
-                }
+                if (pPose && tPose) {
+                    this.proximalPos.set(pPose.transform.position.x, pPose.transform.position.y, pPose.transform.position.z);
+                    this.tipPos.set(tPose.transform.position.x, tPose.transform.position.y, tPose.transform.position.z);
+                    if (this.proximalPos.distanceTo(this.tipPos) > this.data.threshold) {
+                        this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
+                        this.worldVector.copy(this.vector).applyQuaternion(this.data.rig.object3D.quaternion).multiplyScalar(this.data.speed);
+                        const n = this.data.rig.object3D.position.clone().add(this.worldVector);
+                        const inBunker = (n.z > 60 && n.z < 180 && Math.abs(n.x) < 70);
+                        const minY = inBunker ? -19.2 : 0.2;
+                        if (n.y < minY) n.y = minY;
+                        this.data.rig.object3D.position.copy(n);
+                        this.updateArrow(this.tipPos, this.vector);
+                    } else { this.stop(); }
+                } else { this.stop(); }
             },
-
             updateArrow: function(pos, dir) {
                 if (!this.arrow) return;
-                if (!this.arrow.getAttribute('visible')) {
-                    this.arrow.setAttribute('visible', 'true');
-                }
-                this.arrowPos.copy(pos).addScaledVector(dir, 0.15);
-                this.arrow.object3D.position.copy(this.arrowPos);
-                this.lookAtPos.copy(this.arrowPos).add(dir);
+                this.arrow.setAttribute('visible', 'true');
+                this.arrow.object3D.position.copy(pos).addScaledVector(dir, 0.1);
+                this.lookAtPos.copy(this.arrow.object3D.position).add(dir);
                 this.arrow.object3D.lookAt(this.lookAtPos);
             },
-
-            stopMovement: function() {
-                if (this.arrow && this.arrow.getAttribute('visible')) {
-                    this.arrow.setAttribute('visible', 'false');
-                }
-            }
+            stop: function() { if (this.arrow) this.arrow.setAttribute('visible', 'false'); }
         });
 
-        // PROCEDURAL CITY GENERATION SYSTEM (Upgraded for Density and Complexity)
-        AFRAME.registerComponent('city-generator', {
+        AFRAME.registerComponent('mega-world-gen', {
             init: function() {
                 const scene = this.el;
+                const sys = scene.components['dystopian-system'];
 
-                // 1. Generate Complex Brutalist Megacity Buildings
-                const buildingCount = 280; // High density
-                for (let i = 0; i < buildingCount; i++) {
-                    let x = (Math.random() - 0.5) * 700;
-                    let z = (Math.random() - 0.5) * 700;
-                    
-                    // Keep the central plaza area completely clear
-                    if (Math.abs(x) < 70 && z > -50 && z < 90) {
-                        x += x > 0 ? 80 : -80;
-                    }
-
-                    const buildingGroup = document.createElement('a-entity');
-                    buildingGroup.setAttribute('position', `${x} 0 ${z}`);
-
-                    // Base tower height (taller to make it feel like a megacity)
-                    const baseHeight = 30 + Math.random() * 150;
-                    const baseWidth = 12 + Math.random() * 25;
-                    const baseDepth = 12 + Math.random() * 25;
-
-                    // Color palette: Brutalist metallic dark blue-gray
-                    const h = Math.floor(210 + Math.random() * 20);
-                    const s = Math.floor(10 + Math.random() * 15);
-                    const l = Math.floor(10 + Math.random() * 15);
-                    const bColor = `hsl(${h}, ${s}%, ${l}%)`;
-                    const materialStr = 'roughness: 0.85; metalness: 0.4';
-
-                    // Main Shaft
-                    const mainBox = document.createElement('a-box');
-                    mainBox.setAttribute('position', `0 ${baseHeight / 2} 0`);
-                    mainBox.setAttribute('width', baseWidth);
-                    mainBox.setAttribute('height', baseHeight);
-                    mainBox.setAttribute('depth', baseDepth);
-                    mainBox.setAttribute('color', bColor);
-                    mainBox.setAttribute('material', materialStr);
-                    buildingGroup.appendChild(mainBox);
-
-                    // Greebling (Add 2 to 5 attached blocks/shapes to make it complex)
-                    const blockCount = Math.floor(Math.random() * 4) + 2;
-                    for (let j = 0; j < blockCount; j++) {
-                        const isCylinder = Math.random() > 0.8; // Occasional cylindrical silos
-                        const shape = document.createElement(isCylinder ? 'a-cylinder' : 'a-box');
-                        
-                        const bWidth = baseWidth * (0.4 + Math.random() * 0.8);
-                        const bDepth = baseDepth * (0.4 + Math.random() * 0.8);
-                        const bHeight = baseHeight * (0.1 + Math.random() * 0.8);
-                        
-                        const bX = (Math.random() - 0.5) * baseWidth * 1.5;
-                        const bY = bHeight / 2 + Math.random() * (baseHeight - bHeight);
-                        const bZ = (Math.random() - 0.5) * baseDepth * 1.5;
-
-                        shape.setAttribute('position', `${bX} ${bY} ${bZ}`);
-                        shape.setAttribute('color', `hsl(${h}, ${s}%, ${l + (Math.random() * 5 - 2)}%)`);
-                        shape.setAttribute('material', materialStr);
-                        
-                        if (isCylinder) {
-                            shape.setAttribute('radius', bWidth / 2);
-                            shape.setAttribute('height', bHeight);
-                        } else {
-                            shape.setAttribute('width', bWidth);
-                            shape.setAttribute('height', bHeight);
-                            shape.setAttribute('depth', bDepth);
-                        }
-                        buildingGroup.appendChild(shape);
-                    }
-
-                    // Dystopian Elements: Industrial Pipes / Antennas
-                    if (Math.random() > 0.6) {
-                        const antenna = document.createElement('a-cylinder');
-                        antenna.setAttribute('position', `${(Math.random() - 0.5) * baseWidth} ${baseHeight + 10} ${(Math.random() - 0.5) * baseDepth}`);
-                        antenna.setAttribute('radius', '0.5');
-                        antenna.setAttribute('height', '20');
-                        antenna.setAttribute('color', '#111');
-                        buildingGroup.appendChild(antenna);
-                    }
-
-                    // Dystopian Elements: Neon Accents / Warning Lights
-                    if (Math.random() > 0.7) {
-                        const neon = document.createElement('a-box');
-                        const isVertical = Math.random() > 0.5;
-                        const neonColor = Math.random() > 0.5 ? '#ff2a2a' : '#2a2aff';
-                        
-                        neon.setAttribute('position', `${(Math.random() > 0.5 ? 1 : -1) * (baseWidth/2 + 0.5)} ${baseHeight * Math.random()} 0`);
-                        neon.setAttribute('width', isVertical ? '0.5' : baseWidth * 0.8);
-                        neon.setAttribute('height', isVertical ? baseHeight * 0.3 : '0.5');
-                        neon.setAttribute('depth', isVertical ? baseDepth * 0.8 : '0.5');
-                        neon.setAttribute('color', neonColor);
-                        neon.setAttribute('material', 'shader: flat'); // Flat shader makes it look glowing
-                        buildingGroup.appendChild(neon);
-                    }
-
-                    scene.appendChild(buildingGroup);
-                }
-
-                // 2. Build the Massive Dictator Statue (at Z = -15)
-                const buildStatuePart = (w, h, d, y, z, color, isFlat) => {
-                    const part = document.createElement('a-box');
-                    part.setAttribute('width', w);
-                    part.setAttribute('height', h);
-                    part.setAttribute('depth', d);
-                    part.setAttribute('position', `0 ${y} ${z}`);
-                    part.setAttribute('color', color || '#11141a');
-                    part.setAttribute('material', isFlat ? 'shader: flat' : 'roughness: 0.9; metalness: 0.6');
-                    scene.appendChild(part);
+                const getDystopianColor = (isSlum) => {
+                    const h = isSlum ? (20 + Math.random() * 20) : (210 + Math.random() * 20); // Browns vs Dark Blues
+                    const s = isSlum ? (10 + Math.random() * 15) : (5 + Math.random() * 10);
+                    const l = isSlum ? (5 + Math.random() * 10) : (2 + Math.random() * 8);
+                    return `hsl(${h}, ${s}%, ${l}%)`;
                 };
-                
-                buildStatuePart(20, 8, 20, 4, -15);    // Base
-                buildStatuePart(12, 35, 12, 25, -15);  // Body
-                buildStatuePart(22, 8, 10, 45, -15);   // Shoulders
-                buildStatuePart(8, 10, 8, 55, -15);    // Head
-                buildStatuePart(6, 2, 2, 56, -11, '#ff1111', true); // Glowing red visor/eyes
 
-                // 3. Generate Soldier Grid (More dense, menacing)
-                for (let row = 0; row < 12; row++) {
-                    for (let col = 0; col < 25; col++) {
-                        const soldier = document.createElement('a-box');
-                        const sx = -24 + col * 2;
-                        const sz = 8 + row * 1.5;
-                        
-                        soldier.setAttribute('position', `${sx} 0.9 ${sz}`);
-                        soldier.setAttribute('width', '0.7');
-                        soldier.setAttribute('height', '1.8');
-                        soldier.setAttribute('depth', '0.7');
-                        soldier.setAttribute('color', '#1a3318'); // Darker metallic green
-                        soldier.setAttribute('material', 'roughness: 0.6; metalness: 0.5');
-                        scene.appendChild(soldier);
+                // 1. MEGATOWERS WITH PIPES & PLATES (400)
+                for (let i = 0; i < 400; i++) {
+                    const x = (Math.random() - 0.5) * 1400;
+                    const z = (Math.random() - 0.5) * 1400;
+                    if (Math.abs(x) < 90 && z < 200) continue; 
+
+                    const tower = document.createElement('a-entity');
+                    tower.setAttribute('position', `${x} 0 ${z}`);
+                    const h = 80 + Math.random() * 280;
+                    const w = 20 + Math.random() * 35;
+                    
+                    const core = document.createElement('a-box');
+                    core.setAttribute('width', w); core.setAttribute('height', h); core.setAttribute('depth', w);
+                    core.setAttribute('position', `0 ${h/2} 0`);
+                    core.setAttribute('color', getDystopianColor(false));
+                    core.setAttribute('material', 'metalness: 0.8; roughness: 0.5');
+                    tower.appendChild(core);
+
+                    // Procedural Pipes & Plates on Buildings
+                    for(let j=0; j<8; j++) {
+                        const pipe = document.createElement('a-cylinder');
+                        pipe.setAttribute('radius', '0.4');
+                        pipe.setAttribute('height', h);
+                        pipe.setAttribute('position', `${(Math.random()-0.5)*w} ${h/2} ${(Math.random()-0.5)*w}`);
+                        pipe.setAttribute('color', '#111');
+                        tower.appendChild(pipe);
+
+                        const plate = document.createElement('a-box');
+                        plate.setAttribute('width', w * 0.4); plate.setAttribute('height', h * 0.1); plate.setAttribute('depth', 0.5);
+                        plate.setAttribute('position', `${(Math.random()-0.5)*w} ${Math.random()*h} ${w/2 + 0.1}`);
+                        plate.setAttribute('color', '#0a0a0a');
+                        tower.appendChild(plate);
                     }
+                    scene.appendChild(tower);
                 }
 
-                // 4. Generate Random Civilians
-                let civCount = 0;
-                while (civCount < 200) {
-                    const cx = (Math.random() - 0.5) * 140;
-                    const cz = (Math.random() - 0.5) * 140 + 20;
-                    
-                    const inSoldierZone = (cx > -28 && cx < 28 && cz > 5 && cz < 28);
-                    const onPlatform = (cx > -25 && cx < 25 && cz > 18 && cz < 62);
-                    
-                    if (!inSoldierZone && !onPlatform) {
-                        const civilian = document.createElement('a-entity');
-                        civilian.setAttribute('position', `${cx} 0 ${cz}`);
+                // 2. ULTRA DENSE SLUMS (1200 Modules)
+                for (let i = 0; i < 1200; i++) {
+                    const x = (Math.random() - 0.5) * 800;
+                    const z = (Math.random() - 0.5) * 800;
+                    if (Math.abs(x) < 60 && z < 140) continue; 
 
-                        const body = document.createElement('a-cylinder');
-                        body.setAttribute('radius', '0.25');
-                        body.setAttribute('height', '1.3');
-                        body.setAttribute('position', '0 0.65 0');
-                        body.setAttribute('color', '#22252e');
-                        
-                        const head = document.createElement('a-sphere');
-                        head.setAttribute('radius', '0.2');
-                        head.setAttribute('position', '0 1.5 0');
-                        head.setAttribute('color', '#dca98e');
-
-                        civilian.appendChild(body);
-                        civilian.appendChild(head);
-                        scene.appendChild(civilian);
-                        
-                        civCount++;
-                    }
+                    const slum = document.createElement('a-box');
+                    const sw = 6 + Math.random() * 12;
+                    const sh = 1 + Math.random() * 5;
+                    const sd = 6 + Math.random() * 12;
+                    slum.setAttribute('width', sw); slum.setAttribute('height', sh); slum.setAttribute('depth', sd);
+                    slum.setAttribute('position', `${x} ${sh/2} ${z}`);
+                    slum.setAttribute('color', getDystopianColor(true));
+                    slum.setAttribute('material', 'roughness: 1; metalness: 0');
+                    scene.appendChild(slum);
                 }
 
-                // 5. Add Security Drones Hovering over the Plaza
-                for(let k=0; k<20; k++) {
-                    const dx = (Math.random() - 0.5) * 150;
-                    const dy = 15 + Math.random() * 30;
-                    const dz = (Math.random() - 0.5) * 150;
+                // 3. GROUND PIPING & PLATES (400)
+                for (let i = 0; i < 400; i++) {
+                    const pipe = document.createElement('a-cylinder');
+                    pipe.setAttribute('radius', '0.3'); pipe.setAttribute('height', '20');
+                    pipe.setAttribute('position', `${(Math.random()-0.5)*500} 0.2 ${(Math.random()-0.5)*500}`);
+                    pipe.setAttribute('rotation', '0 90 90');
+                    pipe.setAttribute('color', '#080808');
+                    scene.appendChild(pipe);
+                }
 
+                // 4. MOVING ELEMENTS
+                for (let i = 0; i < 500; i++) {
+                    const cit = document.createElement('a-entity');
+                    cit.setAttribute('position', `${(Math.random()-0.5)*400} 0 ${(Math.random()-0.5)*600}`);
+                    const body = document.createElement('a-cylinder');
+                    body.setAttribute('radius', '0.25'); body.setAttribute('height', '1.4'); body.setAttribute('color', '#050505');
+                    cit.appendChild(body);
+                    scene.appendChild(cit);
+                    sys.registerCitizen(cit);
+                }
+
+                for (let i = 0; i < 60; i++) {
                     const drone = document.createElement('a-entity');
-                    drone.setAttribute('position', `${dx} ${dy} ${dz}`);
-
-                    const dBody = document.createElement('a-box');
-                    dBody.setAttribute('width', '1.5');
-                    dBody.setAttribute('height', '1');
-                    dBody.setAttribute('depth', '1.5');
-                    dBody.setAttribute('color', '#0a0a0a');
-
-                    const dLight = document.createElement('a-cone');
-                    dLight.setAttribute('radius-bottom', '4');
-                    dLight.setAttribute('radius-top', '0.1');
-                    dLight.setAttribute('height', '10');
-                    dLight.setAttribute('position', '0 -5 0');
-                    dLight.setAttribute('material', 'color: #ff2222; shader: flat; transparent: true; opacity: 0.15');
-
-                    drone.appendChild(dBody);
-                    drone.appendChild(dLight);
+                    drone.setAttribute('position', `${(Math.random()-0.5)*500} ${35+Math.random()*25} ${(Math.random()-0.5)*500}`);
+                    const dBox = document.createElement('a-box');
+                    dBox.setAttribute('scale', '2.5 0.5 2.5'); dBox.setAttribute('color', '#000');
+                    drone.appendChild(dBox);
+                    const beam = document.createElement('a-cone');
+                    beam.setAttribute('radius-bottom', '10'); beam.setAttribute('height', '35'); beam.setAttribute('position', '0 -17.5 0');
+                    beam.setAttribute('material', 'shader: flat; color: #ff0000; transparent: true; opacity: 0.08');
+                    drone.appendChild(beam);
                     scene.appendChild(drone);
+                    sys.registerDrone(drone);
                 }
 
-                // 6. Propaganda Holograms
-                const words = ["OBEY", "WORK", "REPORT", "ORDER", "STATE"];
-                for(let h=0; h<8; h++) {
-                    const text = document.createElement('a-text');
-                    const tx = (Math.random() - 0.5) * 200;
-                    const ty = 40 + Math.random() * 60;
-                    const tz = (Math.random() - 0.5) * 200;
-                    
-                    text.setAttribute('position', `${tx} ${ty} ${tz}`);
-                    text.setAttribute('value', words[Math.floor(Math.random() * words.length)]);
-                    text.setAttribute('color', '#ff3333');
-                    text.setAttribute('scale', '40 40 40');
-                    text.setAttribute('align', 'center');
-                    // Point somewhat towards the central area
-                    text.setAttribute('look-at', '0 10 40');
-                    scene.appendChild(text);
+                for (let i = 0; i < 200; i++) {
+                    const p = document.createElement('a-box');
+                    p.setAttribute('width', '0.1'); p.setAttribute('height', '0.1'); p.setAttribute('depth', '4');
+                    p.setAttribute('position', `${(Math.random()-0.5)*600} ${Math.random()*150} ${(Math.random()-0.5)*600}`);
+                    p.setAttribute('material', 'shader: flat; color: #ff1111; transparent: true; opacity: 0.4');
+                    scene.appendChild(p);
+                    sys.registerParticle(p);
                 }
             }
         });
     </script>
 </head>
 <body>
-    <!-- Main Scene: Applies fog for red atmospheric haze -->
     <a-scene 
+        dystopian-system
         finger-locomotion 
-        city-generator 
-        fog="type: exponential; color: #4a080c; density: 0.008"
-        background="color: #03060c">
+        mega-world-gen 
+        fog="type: exponential; color: #1e0305; density: 0.0065"
+        background="color: #010103">
         
-        <!-- Environment Lighting (Dawn / Dark Authoritarian) -->
-        <a-light type="ambient" color="#12182b" intensity="0.9"></a-light>
-        <a-light type="directional" color="#ff3311" position="-1 0.1 -0.5" intensity="1.8"></a-light>
+        <a-light type="ambient" color="#1a1a25" intensity="0.4"></a-light>
+        <a-light type="directional" color="#ff2200" position="-1 0.6 -0.8" intensity="1.6"></a-light>
 
-        <!-- Ground Plane -->
-        <a-plane rotation="-90 0 0" width="1200" height="1200" color="#080a0f" material="roughness: 1; metalness: 0.1"></a-plane>
+        <!-- Giant Red Moon -->
+        <a-sphere position="-300 500 -800" radius="120" material="shader: flat; color: #aa0000" 
+                  animation="property: material.color; from: #aa0000; to: #440000; dir: alternate; dur: 5000; loop: true"></a-sphere>
 
-        <!-- Dictator Platform (40x40 units, highly elevated) -->
-        <a-box position="0 5 40" width="40" height="10" depth="40" color="#181b24" material="roughness: 0.9; metalness: 0.3"></a-box>
+        <!-- Floor -->
+        <a-plane rotation="-90 0 0" width="4000" height="4000" color="#010101"></a-plane>
+        
+        <!-- Platform & Ramp -->
+        <a-box position="0 5 40" width="40" height="10" depth="40" color="#0c0d12"></a-box>
+        <a-box position="0 -6 65" width="12" height="1" depth="55" rotation="28 0 0" color="#050505"></a-box>
+
+        <!-- CENTRAL MONOLITH STATUE -->
+        <a-entity position="0 0 -50">
+            <a-box width="18" height="80" depth="18" position="0 40 0" color="#000"></a-box>
+            <a-box width="8" height="1.5" depth="1.5" position="0 72 9.1" material="shader: flat; color: #f00"></a-box>
+            <!-- Statue Pipe greebling -->
+            <a-cylinder radius="0.8" height="80" position="6 40 6" color="#111"></a-cylinder>
+            <a-cylinder radius="0.8" height="80" position="-6 40 6" color="#111"></a-cylinder>
+        </a-entity>
 
         <!-- PLAYER RIG -->
-        <!-- Placed exactly 10 units above ground, matching the platform's top edge -->
         <a-entity id="rig" position="0 10.1 40">
-            <!-- Camera -->
             <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false"></a-camera>
-
-            <!-- Left Hand Tracking with Black Glove -->
-            <a-entity hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #050505;"></a-entity>
-
-            <!-- Visual Feedback: Glowing Movement Arrow -->
+            <a-entity hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #000;"></a-entity>
             <a-entity id="movement-arrow" visible="false">
-                <!-- Arrow Tip -->
-                <a-cone radius-bottom="0.015" radius-top="0" height="0.06" rotation="-90 0 0" position="0 0 -0.03" 
-                        material="color: #ff2222; shader: flat; transparent: true; opacity: 0.9"></a-cone>
-                <!-- Arrow Shaft -->
-                <a-cylinder radius="0.005" height="0.08" rotation="-90 0 0" position="0 0 0.04" 
-                            material="color: #ff2222; shader: flat; transparent: true; opacity: 0.9"></a-cylinder>
+                <a-cone radius-bottom="0.02" radius-top="0" height="0.18" rotation="90 0 0" material="color: #0f0; shader: flat"></a-cone>
             </a-entity>
+        </a-entity>
+
+        <!-- BACKROOMS RE-EXPANDED -->
+        <a-entity position="0 -20 135">
+            <a-plane rotation="-90 0 0" width="200" height="200" color="#1a1a10"></a-plane>
+            <a-plane rotation="90 0 0" width="200" height="200" position="0 4 0" color="#1a1a10"></a-plane>
+            <script>
+                for(let i=0; i<60; i++) {
+                    const bx = (Math.random()-0.5)*180;
+                    const bz = (Math.random()-0.5)*180;
+                    document.write(`<a-box position="${bx} 2 ${bz}" width="2" height="4" depth="2" color="#6b6b50"></a-box>`);
+                    document.write(`<a-box position="${bx+2} 0.5 ${bz+2}" scale="0.8 0.8 0.8" color="#3a2515"></a-box>`);
+                }
+            </script>
         </a-entity>
 
     </a-scene>
