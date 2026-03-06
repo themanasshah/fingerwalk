@@ -190,7 +190,234 @@ civ.appendChild(h)
 <script>
 
 let city=document.querySelector("#buildings")
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dictator City VR</title>
 
+<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+
+<script>
+AFRAME.registerComponent("finger-locomotion",{
+
+init:function(){
+
+this.rig=document.querySelector("#rig")
+this.hand=document.querySelector("#leftHand")
+this.arrow=document.querySelector("#arrow")
+
+this.speed=0.18
+
+},
+
+tick:function(){
+
+if(!this.hand.components["hand-tracking-controls"]) return
+
+let mesh=this.hand.components["hand-tracking-controls"].skinnedMesh
+if(!mesh) return
+
+let bones=mesh.skeleton.bones
+
+let tip=bones.find(b=>b.name.includes("index-finger-tip"))
+let mid=bones.find(b=>b.name.includes("index-finger-phalanx-proximal"))
+
+if(!tip || !mid) return
+
+let tipPos=new THREE.Vector3()
+let midPos=new THREE.Vector3()
+
+tip.getWorldPosition(tipPos)
+mid.getWorldPosition(midPos)
+
+let dir=tipPos.clone().sub(midPos)
+let length=dir.length()
+
+/* finger must be extended */
+if(length < 0.03){
+this.arrow.setAttribute("visible",false)
+return
+}
+
+dir.normalize()
+
+let rig=this.rig.object3D
+
+rig.position.x+=dir.x*this.speed
+rig.position.y+=dir.y*this.speed
+rig.position.z+=dir.z*this.speed
+
+this.arrow.object3D.lookAt(
+rig.position.x+dir.x,
+rig.position.y+dir.y,
+rig.position.z+dir.z
+)
+
+this.arrow.setAttribute("visible",true)
+
+}
+
+})
+</script>
+
+</head>
+
+<body>
+
+<a-scene background="color:#0b1c3a">
+
+<a-light type="ambient" intensity="0.7"></a-light>
+<a-light type="directional" position="5 10 5" color="#ff4444"></a-light>
+
+<a-sky color="#0b1c3a"></a-sky>
+
+<!-- PLAYER -->
+
+<a-entity id="rig" position="0 10 25" finger-locomotion>
+
+<a-camera></a-camera>
+
+<a-cone
+id="arrow"
+radius-bottom="0.15"
+radius-top="0"
+height="0.4"
+color="red"
+position="0 -0.4 -1"
+visible="false">
+</a-cone>
+
+</a-entity>
+
+<!-- LEFT HAND -->
+
+<a-entity
+id="leftHand"
+hand-tracking-controls="hand: left; modelColor: black">
+</a-entity>
+
+<!-- PLATFORM -->
+
+<a-box
+position="0 0 25"
+width="40"
+height="2"
+depth="40"
+color="#222">
+</a-box>
+
+<!-- STATUE -->
+
+<a-cylinder
+position="0 25 -40"
+height="50"
+radius="3"
+color="#111">
+</a-cylinder>
+
+<a-sphere
+position="0 52 -40"
+radius="5"
+color="#111">
+</a-sphere>
+
+<!-- SOLDIERS -->
+
+<a-entity id="soldiers"></a-entity>
+
+<script>
+
+let soldiers=document.querySelector("#soldiers")
+
+for(let i=0;i<10;i++){
+for(let j=0;j<20;j++){
+
+let s=document.createElement("a-box")
+
+s.setAttribute("width",0.5)
+s.setAttribute("height",1.6)
+s.setAttribute("depth",0.5)
+s.setAttribute("color","#1f5b2c")
+
+s.setAttribute("position",(i*1.2-6)+" 0 "+(-j*1.5))
+
+soldiers.appendChild(s)
+
+}
+}
+
+</script>
+
+<!-- CIVILIANS -->
+
+<a-entity id="civilians"></a-entity>
+
+<script>
+
+let civ=document.querySelector("#civilians")
+
+for(let i=0;i<80;i++){
+
+let h=document.createElement("a-sphere")
+
+h.setAttribute("radius",0.25)
+h.setAttribute("color","#f5c6a5")
+
+let x=(Math.random()*60)-30
+let z=(Math.random()*60)-60
+
+h.setAttribute("position",x+" 0.25 "+z)
+
+civ.appendChild(h)
+
+}
+
+</script>
+
+<!-- BUILDINGS WITH COLOR VARIATION -->
+
+<a-entity id="buildings"></a-entity>
+
+<script>
+
+let city=document.querySelector("#buildings")
+
+for(let i=0;i<140;i++){
+
+let b=document.createElement("a-box")
+
+let h=10+Math.random()*80
+
+b.setAttribute("height",h)
+b.setAttribute("width",6)
+b.setAttribute("depth",6)
+
+let hueShift=(Math.random()*20)-10
+let lightShift=(Math.random()*20)-10
+
+let baseHue=220+hueShift
+let light=25+lightShift
+
+let color=`hsl(${baseHue},20%,${light}%)`
+
+b.setAttribute("color",color)
+
+let x=(Math.random()*200)-100
+let z=(Math.random()*200)-200
+
+b.setAttribute("position",x+" "+(h/2)+" "+z)
+
+city.appendChild(b)
+
+}
+
+</script>
+
+</a-scene>
+
+</body>
+</html>
 for(let i=0;i<140;i++){
 
 let b=document.createElement("a-box")
