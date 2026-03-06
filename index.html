@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Hyper-Dense Dystopian Megacity</title>
+    <title>Hyper-Dense Dystopian Megacity - Speed Control</title>
     <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
     <script>
@@ -21,35 +21,37 @@
 
             tick: function(t, dt) {
                 this.time += dt * 0.001;
-                
                 this.drones.forEach((d, i) => {
                     const offset = i * 2;
                     d.object3D.position.x += Math.cos(this.time + offset) * 0.08;
                     d.object3D.position.z += Math.sin(this.time + offset) * 0.08;
                 });
-
                 this.citizens.forEach((c, i) => {
-                    const speed = 0.015 + (i % 8) * 0.004;
+                    const speed = 0.02 + (i % 8) * 0.005;
                     c.object3D.position.z -= speed;
-                    if (c.object3D.position.z < -300) c.object3D.position.z = 300;
+                    if (c.object3D.position.z < -400) c.object3D.position.z = 400;
                 });
-
                 this.particles.forEach((p) => {
-                    p.object3D.position.x -= 0.8;
-                    if (p.object3D.position.x < -500) p.object3D.position.x = 500;
+                    p.object3D.position.x -= 1.2;
+                    if (p.object3D.position.x < -600) p.object3D.position.x = 600;
                 });
             }
         });
 
-        // LOCOMOTION WITH FLOOR COLLISION
+        // ADVANCED LOCOMOTION WITH RIGHT-HAND THROTTLE
         AFRAME.registerComponent('finger-locomotion', {
-            schema: { speed: { type: 'number', default: 0.25 }, threshold: { type: 'number', default: 0.035 }, rig: { type: 'selector', default: '#rig' } },
+            schema: { 
+                baseSpeed: { type: 'number', default: 0.4 }, 
+                threshold: { type: 'number', default: 0.035 }, 
+                rig: { type: 'selector', default: '#rig' } 
+            },
             init: function() {
                 this.vector = new THREE.Vector3();
                 this.worldVector = new THREE.Vector3();
                 this.proximalPos = new THREE.Vector3();
                 this.tipPos = new THREE.Vector3();
                 this.lookAtPos = new THREE.Vector3();
+                this.currentSpeedMultiplier = 1.0;
                 this.arrow = document.querySelector('#movement-arrow');
             },
             tick: function() {
@@ -58,24 +60,57 @@
                 if (!session) return;
                 const frame = this.el.frame;
                 const refSpace = xr.getReferenceSpace();
-                let hand = null;
-                for (let s of session.inputSources) if (s.handedness === 'left' && s.hand) hand = s;
-                if (!hand) { this.stop(); return; }
 
-                const pJoint = hand.hand.get('index-finger-phalanx-proximal');
-                const tJoint = hand.hand.get('index-finger-tip');
+                let leftHand = null;
+                let rightHand = null;
+                
+                for (let s of session.inputSources) {
+                    if (s.hand) {
+                        if (s.handedness === 'left') leftHand = s;
+                        if (s.handedness === 'right') rightHand = s;
+                    }
+                }
+
+                // 1. SPEED CONTROL (RIGHT HAND TILT)
+                if (rightHand) {
+                    const rWrist = rightHand.hand.get('wrist');
+                    const rWristPose = frame.getJointPose(rWrist, refSpace);
+                    if (rWristPose) {
+                        const quat = new THREE.Quaternion(
+                            rWristPose.transform.orientation.x,
+                            rWristPose.transform.orientation.y,
+                            rWristPose.transform.orientation.z,
+                            rWristPose.transform.orientation.w
+                        );
+                        const euler = new THREE.Euler().setFromQuaternion(quat);
+                        // Map wrist Z-rotation (tilt) to speed multiplier (0.2x to 3.0x)
+                        // Tilt right = increase, Tilt left = decrease
+                        let tilt = euler.z; 
+                        this.currentSpeedMultiplier = THREE.MathUtils.clamp(1.0 + (tilt * 1.5), 0.2, 4.0);
+                    }
+                }
+
+                // 2. DIRECTION CONTROL (LEFT HAND POINT)
+                if (!leftHand) { this.stop(); return; }
+                const pJoint = leftHand.hand.get('index-finger-phalanx-proximal');
+                const tJoint = leftHand.hand.get('index-finger-tip');
                 const pPose = frame.getJointPose(pJoint, refSpace);
                 const tPose = frame.getJointPose(tJoint, refSpace);
 
                 if (pPose && tPose) {
                     this.proximalPos.set(pPose.transform.position.x, pPose.transform.position.y, pPose.transform.position.z);
                     this.tipPos.set(tPose.transform.position.x, tPose.transform.position.y, tPose.transform.position.z);
+                    
                     if (this.proximalPos.distanceTo(this.tipPos) > this.data.threshold) {
                         this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
-                        this.worldVector.copy(this.vector).applyQuaternion(this.data.rig.object3D.quaternion).multiplyScalar(this.data.speed);
+                        
+                        const speed = this.data.baseSpeed * this.currentSpeedMultiplier;
+                        this.worldVector.copy(this.vector).applyQuaternion(this.data.rig.object3D.quaternion).multiplyScalar(speed);
+                        
                         const n = this.data.rig.object3D.position.clone().add(this.worldVector);
-                        const inBunker = (n.z > 60 && n.z < 180 && Math.abs(n.x) < 70);
+                        const inBunker = (n.z > 60 && n.z < 200 && Math.abs(n.x) < 80);
                         const minY = inBunker ? -19.2 : 0.2;
+                        
                         if (n.y < minY) n.y = minY;
                         this.data.rig.object3D.position.copy(n);
                         this.updateArrow(this.tipPos, this.vector);
@@ -88,6 +123,9 @@
                 this.arrow.object3D.position.copy(pos).addScaledVector(dir, 0.1);
                 this.lookAtPos.copy(this.arrow.object3D.position).add(dir);
                 this.arrow.object3D.lookAt(this.lookAtPos);
+                // Scale arrow color based on speed
+                const speedColor = this.currentSpeedMultiplier > 1.5 ? "#ff00ff" : "#00ff00";
+                this.arrow.querySelector('a-cone').setAttribute('material', 'color', speedColor);
             },
             stop: function() { if (this.arrow) this.arrow.setAttribute('visible', 'false'); }
         });
@@ -97,108 +135,59 @@
                 const scene = this.el;
                 const sys = scene.components['dystopian-system'];
 
-                const getDystopianColor = (isSlum) => {
-                    const h = isSlum ? (20 + Math.random() * 20) : (210 + Math.random() * 20); // Browns vs Dark Blues
-                    const s = isSlum ? (10 + Math.random() * 15) : (5 + Math.random() * 10);
-                    const l = isSlum ? (5 + Math.random() * 10) : (2 + Math.random() * 8);
-                    return `hsl(${h}, ${s}%, ${l}%)`;
-                };
-
-                // 1. MEGATOWERS WITH PIPES & PLATES (400)
+                // Towers (400)
                 for (let i = 0; i < 400; i++) {
-                    const x = (Math.random() - 0.5) * 1400;
-                    const z = (Math.random() - 0.5) * 1400;
-                    if (Math.abs(x) < 90 && z < 200) continue; 
-
+                    const x = (Math.random() - 0.5) * 1600;
+                    const z = (Math.random() - 0.5) * 1600;
+                    if (Math.abs(x) < 100 && z < 220) continue; 
                     const tower = document.createElement('a-entity');
                     tower.setAttribute('position', `${x} 0 ${z}`);
-                    const h = 80 + Math.random() * 280;
-                    const w = 20 + Math.random() * 35;
-                    
+                    const h = 100 + Math.random() * 300;
+                    const w = 25 + Math.random() * 40;
                     const core = document.createElement('a-box');
                     core.setAttribute('width', w); core.setAttribute('height', h); core.setAttribute('depth', w);
                     core.setAttribute('position', `0 ${h/2} 0`);
-                    core.setAttribute('color', getDystopianColor(false));
-                    core.setAttribute('material', 'metalness: 0.8; roughness: 0.5');
+                    core.setAttribute('color', `hsl(${220+Math.random()*20}, 10%, ${2+Math.random()*6}%)`);
                     tower.appendChild(core);
-
-                    // Procedural Pipes & Plates on Buildings
-                    for(let j=0; j<8; j++) {
+                    
+                    for(let j=0; j<6; j++) {
                         const pipe = document.createElement('a-cylinder');
-                        pipe.setAttribute('radius', '0.4');
-                        pipe.setAttribute('height', h);
+                        pipe.setAttribute('radius', '0.6'); pipe.setAttribute('height', h);
                         pipe.setAttribute('position', `${(Math.random()-0.5)*w} ${h/2} ${(Math.random()-0.5)*w}`);
-                        pipe.setAttribute('color', '#111');
+                        pipe.setAttribute('color', '#050505');
                         tower.appendChild(pipe);
-
-                        const plate = document.createElement('a-box');
-                        plate.setAttribute('width', w * 0.4); plate.setAttribute('height', h * 0.1); plate.setAttribute('depth', 0.5);
-                        plate.setAttribute('position', `${(Math.random()-0.5)*w} ${Math.random()*h} ${w/2 + 0.1}`);
-                        plate.setAttribute('color', '#0a0a0a');
-                        tower.appendChild(plate);
                     }
                     scene.appendChild(tower);
                 }
 
-                // 2. ULTRA DENSE SLUMS (1200 Modules)
-                for (let i = 0; i < 1200; i++) {
-                    const x = (Math.random() - 0.5) * 800;
-                    const z = (Math.random() - 0.5) * 800;
-                    if (Math.abs(x) < 60 && z < 140) continue; 
-
+                // Dense Slums (1500)
+                for (let i = 0; i < 1500; i++) {
+                    const x = (Math.random() - 0.5) * 1000;
+                    const z = (Math.random() - 0.5) * 1000;
+                    if (Math.abs(x) < 70 && z < 150) continue; 
                     const slum = document.createElement('a-box');
-                    const sw = 6 + Math.random() * 12;
-                    const sh = 1 + Math.random() * 5;
-                    const sd = 6 + Math.random() * 12;
+                    const sw = 8 + Math.random() * 15;
+                    const sh = 1 + Math.random() * 6;
+                    const sd = 8 + Math.random() * 15;
                     slum.setAttribute('width', sw); slum.setAttribute('height', sh); slum.setAttribute('depth', sd);
                     slum.setAttribute('position', `${x} ${sh/2} ${z}`);
-                    slum.setAttribute('color', getDystopianColor(true));
-                    slum.setAttribute('material', 'roughness: 1; metalness: 0');
+                    slum.setAttribute('color', `hsl(${25+Math.random()*15}, 15%, ${4+Math.random()*8}%)`);
                     scene.appendChild(slum);
                 }
 
-                // 3. GROUND PIPING & PLATES (400)
-                for (let i = 0; i < 400; i++) {
-                    const pipe = document.createElement('a-cylinder');
-                    pipe.setAttribute('radius', '0.3'); pipe.setAttribute('height', '20');
-                    pipe.setAttribute('position', `${(Math.random()-0.5)*500} 0.2 ${(Math.random()-0.5)*500}`);
-                    pipe.setAttribute('rotation', '0 90 90');
-                    pipe.setAttribute('color', '#080808');
-                    scene.appendChild(pipe);
-                }
-
-                // 4. MOVING ELEMENTS
-                for (let i = 0; i < 500; i++) {
-                    const cit = document.createElement('a-entity');
-                    cit.setAttribute('position', `${(Math.random()-0.5)*400} 0 ${(Math.random()-0.5)*600}`);
-                    const body = document.createElement('a-cylinder');
-                    body.setAttribute('radius', '0.25'); body.setAttribute('height', '1.4'); body.setAttribute('color', '#050505');
-                    cit.appendChild(body);
-                    scene.appendChild(cit);
-                    sys.registerCitizen(cit);
-                }
-
-                for (let i = 0; i < 60; i++) {
+                // Dynamic Objects
+                for (let i = 0; i < 80; i++) {
                     const drone = document.createElement('a-entity');
-                    drone.setAttribute('position', `${(Math.random()-0.5)*500} ${35+Math.random()*25} ${(Math.random()-0.5)*500}`);
+                    drone.setAttribute('position', `${(Math.random()-0.5)*600} ${40+Math.random()*30} ${(Math.random()-0.5)*600}`);
                     const dBox = document.createElement('a-box');
-                    dBox.setAttribute('scale', '2.5 0.5 2.5'); dBox.setAttribute('color', '#000');
+                    dBox.setAttribute('scale', '3 0.6 3'); dBox.setAttribute('color', '#000');
                     drone.appendChild(dBox);
                     const beam = document.createElement('a-cone');
-                    beam.setAttribute('radius-bottom', '10'); beam.setAttribute('height', '35'); beam.setAttribute('position', '0 -17.5 0');
-                    beam.setAttribute('material', 'shader: flat; color: #ff0000; transparent: true; opacity: 0.08');
+                    beam.setAttribute('radius-bottom', '12'); beam.setAttribute('height', '45'); beam.setAttribute('position', '0 -22 0');
+                    beam.setAttribute('material', 'shader: flat; color: #ff0000; transparent: true; opacity: 0.12');
                     drone.appendChild(beam);
                     scene.appendChild(drone);
                     sys.registerDrone(drone);
-                }
-
-                for (let i = 0; i < 200; i++) {
-                    const p = document.createElement('a-box');
-                    p.setAttribute('width', '0.1'); p.setAttribute('height', '0.1'); p.setAttribute('depth', '4');
-                    p.setAttribute('position', `${(Math.random()-0.5)*600} ${Math.random()*150} ${(Math.random()-0.5)*600}`);
-                    p.setAttribute('material', 'shader: flat; color: #ff1111; transparent: true; opacity: 0.4');
-                    scene.appendChild(p);
-                    sys.registerParticle(p);
                 }
             }
         });
@@ -209,51 +198,57 @@
         dystopian-system
         finger-locomotion 
         mega-world-gen 
-        fog="type: exponential; color: #1e0305; density: 0.0065"
-        background="color: #010103">
+        fog="type: exponential; color: #1a0204; density: 0.006"
+        background="color: #000000">
         
-        <a-light type="ambient" color="#1a1a25" intensity="0.4"></a-light>
-        <a-light type="directional" color="#ff2200" position="-1 0.6 -0.8" intensity="1.6"></a-light>
+        <a-light type="ambient" color="#1a1a25" intensity="0.3"></a-light>
+        <a-light type="directional" color="#ff1100" position="-1 0.7 -1" intensity="2.0"></a-light>
 
-        <!-- Giant Red Moon -->
-        <a-sphere position="-300 500 -800" radius="120" material="shader: flat; color: #aa0000" 
-                  animation="property: material.color; from: #aa0000; to: #440000; dir: alternate; dur: 5000; loop: true"></a-sphere>
+        <!-- GLOWING RED MOON -->
+        <a-entity position="-400 600 -900">
+            <!-- Core -->
+            <a-sphere radius="140" material="shader: flat; color: #ff0000"></a-sphere>
+            <!-- Outer Glow Layers -->
+            <a-sphere radius="160" material="shader: flat; color: #ff0000; transparent: true; opacity: 0.3" side="back"></a-sphere>
+            <a-sphere radius="200" material="shader: flat; color: #ff0000; transparent: true; opacity: 0.1" side="back"></a-sphere>
+            <!-- Light Source -->
+            <a-light type="point" color="#ff0000" intensity="3" distance="2000"></a-light>
+        </a-entity>
 
-        <!-- Floor -->
-        <a-plane rotation="-90 0 0" width="4000" height="4000" color="#010101"></a-plane>
+        <a-plane rotation="-90 0 0" width="5000" height="5000" color="#010101"></a-plane>
         
-        <!-- Platform & Ramp -->
-        <a-box position="0 5 40" width="40" height="10" depth="40" color="#0c0d12"></a-box>
-        <a-box position="0 -6 65" width="12" height="1" depth="55" rotation="28 0 0" color="#050505"></a-box>
+        <!-- Platforms -->
+        <a-box position="0 5 40" width="40" height="10" depth="40" color="#0a0a0f"></a-box>
+        <a-box position="0 -6 65" width="12" height="1" depth="60" rotation="28 0 0" color="#050505"></a-box>
 
-        <!-- CENTRAL MONOLITH STATUE -->
-        <a-entity position="0 0 -50">
-            <a-box width="18" height="80" depth="18" position="0 40 0" color="#000"></a-box>
-            <a-box width="8" height="1.5" depth="1.5" position="0 72 9.1" material="shader: flat; color: #f00"></a-box>
-            <!-- Statue Pipe greebling -->
-            <a-cylinder radius="0.8" height="80" position="6 40 6" color="#111"></a-cylinder>
-            <a-cylinder radius="0.8" height="80" position="-6 40 6" color="#111"></a-cylinder>
+        <!-- MONOLITH -->
+        <a-entity position="0 0 -60">
+            <a-box width="22" height="100" depth="22" position="0 50 0" color="#000"></a-box>
+            <a-box width="10" height="2" depth="2" position="0 90 11.1" material="shader: flat; color: #f00"></a-box>
         </a-entity>
 
         <!-- PLAYER RIG -->
         <a-entity id="rig" position="0 10.1 40">
             <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false"></a-camera>
+            <!-- Controllers -->
             <a-entity hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #000;"></a-entity>
+            <a-entity hand-tracking-controls="hand: right; modelStyle: mesh; modelColor: #000;"></a-entity>
+            
             <a-entity id="movement-arrow" visible="false">
-                <a-cone radius-bottom="0.02" radius-top="0" height="0.18" rotation="90 0 0" material="color: #0f0; shader: flat"></a-cone>
+                <a-cone radius-bottom="0.03" radius-top="0" height="0.25" rotation="90 0 0" material="shader: flat"></a-cone>
             </a-entity>
         </a-entity>
 
-        <!-- BACKROOMS RE-EXPANDED -->
-        <a-entity position="0 -20 135">
-            <a-plane rotation="-90 0 0" width="200" height="200" color="#1a1a10"></a-plane>
-            <a-plane rotation="90 0 0" width="200" height="200" position="0 4 0" color="#1a1a10"></a-plane>
+        <!-- BACKROOMS -->
+        <a-entity position="0 -20 150">
+            <a-plane rotation="-90 0 0" width="300" height="300" color="#14140a"></a-plane>
+            <a-plane rotation="90 0 0" width="300" height="300" position="0 4 0" color="#14140a"></a-plane>
             <script>
-                for(let i=0; i<60; i++) {
-                    const bx = (Math.random()-0.5)*180;
-                    const bz = (Math.random()-0.5)*180;
-                    document.write(`<a-box position="${bx} 2 ${bz}" width="2" height="4" depth="2" color="#6b6b50"></a-box>`);
-                    document.write(`<a-box position="${bx+2} 0.5 ${bz+2}" scale="0.8 0.8 0.8" color="#3a2515"></a-box>`);
+                for(let i=0; i<100; i++) {
+                    const bx = (Math.random()-0.5)*280;
+                    const bz = (Math.random()-0.5)*280;
+                    document.write(`<a-box position="${bx} 2 ${bz}" width="2.2" height="4" depth="2.2" color="#5a5a3a"></a-box>`);
+                    document.write(`<a-box position="${bx+2} 0.5 ${bz+1}" scale="0.9 0.9 0.9" color="#2a1a0a"></a-box>`);
                 }
             </script>
         </a-entity>
