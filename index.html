@@ -23,8 +23,6 @@
 
         init: function () {
           this.rig = document.querySelector(this.data.rigSelector);
-          this.handControls = this.el.components['hand-tracking-controls'];
-          
           this.steps = []; // timestamps of recent steps
           this.lastStepFinger = null; // 'index' or 'middle'
           this.currentSpeed = 0;
@@ -40,15 +38,25 @@
           this.speedBar = this.el.querySelector('.speed-bar-fill');
           
           // Audio setup (Procedural Click)
-          this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          // We use a getter to initialize on first interaction to bypass browser autoplay policies
+          this.audioCtx = null;
           
           // Direction vector helpers
           this.direction = new THREE.Vector3();
           this.handQuat = new THREE.Quaternion();
         },
 
+        initAudio: function() {
+          if (!this.audioCtx) {
+            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          }
+          if (this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
+          }
+        },
+
         playClick: function() {
-          if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+          this.initAudio();
           const osc = this.audioCtx.createOscillator();
           const gain = this.audioCtx.createGain();
           osc.type = 'sine';
@@ -78,8 +86,10 @@
           const animate = () => {
             scale += 0.1;
             opacity -= 0.05;
-            ripple.setAttribute('scale', `${scale} ${scale} ${scale}`);
-            ripple.setAttribute('opacity', opacity);
+            if (ripple.getAttribute('scale')) {
+               ripple.setAttribute('scale', `${scale} ${scale} ${scale}`);
+               ripple.setAttribute('opacity', opacity);
+            }
             if (opacity > 0) {
               requestAnimationFrame(animate);
             } else {
@@ -90,8 +100,13 @@
         },
 
         tick: function (time, delta) {
-          const joints = this.el.components['hand-tracking-controls'].joints;
-          if (!joints || !joints['palm'] || !joints['index-finger-tip'] || !joints['middle-finger-tip']) return;
+          const handControls = this.el.components['hand-tracking-controls'];
+          if (!handControls || !handControls.joints) return;
+
+          const joints = handControls.joints;
+          // Verify joints are actually tracked/populated
+          if (!joints['palm'] || !joints['index-finger-tip'] || !joints['middle-finger-tip']) return;
+          if (!joints['palm'].visible) return; // Hand not currently tracked
 
           const dt = delta / 1000;
           const now = performance.now() / 1000;
@@ -112,27 +127,26 @@
           // Clean up old steps and handle timeout
           if (this.steps.length > 0 && (now - this.steps[this.steps.length - 1]) > this.data.stepTimeout) {
             this.steps = [];
-            this.currentSpeed = Math.max(0, this.currentSpeed - dt * 5); // Decay
           }
 
           // Calculate Speed based on Frequency
           if (this.steps.length >= 2) {
             const duration = this.steps[this.steps.length - 1] - this.steps[0];
-            const frequency = (this.steps.length - 1) / duration;
+            const frequency = (this.steps.length - 1) / Math.max(duration, 0.1);
             const targetSpeed = Math.min(frequency * this.data.speedGain, this.data.maxSpeed);
             // Smooth speed transition
             this.currentSpeed = this.currentSpeed * 0.9 + targetSpeed * 0.1;
-          } else if (this.steps.length === 0) {
-            this.currentSpeed *= 0.85; // Faster decay when no activity
+          } else {
+            // Faster decay when no activity
+            this.currentSpeed = Math.max(0, this.currentSpeed - dt * 5); 
           }
 
           // Apply Movement
-          if (this.currentSpeed > 0.01) {
-            // Get hand orientation - using palm rotation
-            // A-Frame hand-tracking-controls updates the entity's object3D with the hand pose
+          if (this.currentSpeed > 0.01 && this.rig) {
+            // Get hand orientation
             this.el.object3D.getWorldQuaternion(this.handQuat);
             
-            // Forward is local negative Z for the hand entity
+            // Forward is local negative Z
             this.direction.set(0, 0, -1);
             this.direction.applyQuaternion(this.handQuat);
             
@@ -148,8 +162,7 @@
           // Update UI Scale
           if (this.speedBar) {
             const speedRatio = Math.min(this.currentSpeed / this.data.maxSpeed, 1);
-            this.speedBar.setAttribute('scale', `${speedRatio} 1 1`);
-            // Color shift based on speed
+            this.speedBar.setAttribute('scale', `${Math.max(speedRatio, 0.001)} 1 1`);
             const color = speedRatio > 0.8 ? '#ff4081' : '#00e5ff';
             this.speedBar.setAttribute('color', color);
           }
@@ -161,11 +174,7 @@
 
           if (dist < threshold) {
             if (!state.pressed) {
-              // New Step Detected!
               state.pressed = true;
-              
-              // Only count as a step if it alternates or happens after a delay
-              // This prevents accidental double counting
               this.steps.push(now);
               if (this.steps.length > this.data.windowSize) this.steps.shift();
 
@@ -174,7 +183,6 @@
               this.playClick();
             }
           } else if (dist > threshold + 0.01) {
-            // Finger lifted
             state.pressed = false;
           }
         }
@@ -182,8 +190,8 @@
     </script>
   </head>
   <body>
-    <a-scene webxr="requiredFeatures: hand-tracking">
-      <!-- Assets -->
+    <!-- Added renderer settings to ensure high performance/correct loading -->
+    <a-scene webxr="requiredFeatures: hand-tracking" renderer="antialias: true; colorManagement: true;">
       <a-assets>
         <img id="grid" src="https://img.itch.zone/aW1nLzI0NjE3MjgucG5n/original/m%2F6LhJ.png" crossorigin="anonymous">
       </a-assets>
@@ -194,7 +202,6 @@
         
         <!-- Left Hand -->
         <a-entity id="leftHand" hand-tracking-controls="hand: left;" finger-walking="rigSelector: #rig">
-            <!-- Speed Bar UI attached to hand -->
             <a-entity position="0 0.08 0" rotation="-90 0 0">
                 <a-plane width="0.1" height="0.01" color="#333" opacity="0.5"></a-plane>
                 <a-plane class="speed-bar-fill" width="0.1" height="0.01" color="#00e5ff" position="0 0 0.001" scale="0.001 1 1" pivot="-0.05 0 0"></a-plane>
@@ -213,21 +220,17 @@
       <!-- Environment -->
       <a-sky color="#111"></a-sky>
       
-      <!-- Instructions Display -->
       <a-entity position="0 1.5 -2" text="value: HOW TO MOVE:\nHold your hand palm down.\n'Walk' your index and middle fingers\nagainst your palm to move forward.\nFaster tapping = Faster speed.; align: center; width: 3; color: #00e5ff"></a-entity>
 
-      <!-- Ground with Grid -->
       <a-plane rotation="-90 0 0" width="100" height="100" src="#grid" repeat="100 100" material="roughness: 1; metalness: 0"></a-plane>
 
-      <!-- Landmarks for movement perception -->
       <a-entity position="5 0.5 -10" geometry="primitive: box" material="color: #f44336"></a-entity>
       <a-entity position="-5 1 -15" geometry="primitive: sphere" material="color: #4caf50"></a-entity>
       <a-entity position="10 0.75 -25" geometry="primitive: cylinder" material="color: #2196f3"></a-entity>
       <a-entity position="-12 2 -30" geometry="primitive: torus" material="color: #ffeb3b"></a-entity>
       
-      <!-- A series of floating lights for depth -->
-      <a-entity light="type: point; intensity: 0.5; distance: 50; decay: 2" position="0 5 0"></a-entity>
-      <a-entity light="type: ambient; color: #444"></a-entity>
+      <a-entity light="type: point; intensity: 0.8; distance: 50; decay: 2" position="0 5 0"></a-entity>
+      <a-entity light="type: ambient; color: #666"></a-entity>
 
     </a-scene>
   </body>
