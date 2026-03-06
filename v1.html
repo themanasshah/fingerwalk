@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Finger Walking Locomotion</title>
+<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+<script>
+AFRAME.registerComponent('finger-walking',{
+ schema:{
+  rig:{type:'selector'},
+  contactThreshold:{default:0.025},
+  maxSpeed:{default:2},
+  speedGain:{default:0.8},
+  stepTimeout:{default:0.3}
+ },
+ init:function(){
+  this.indexPrev=false; this.middlePrev=false;
+  this.steps=[]; this.speed=0; this.lastStep=0;
+  this.bar=this.el.querySelector('.speedbar');
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  this.audio=ctx;
+ },
+ tick:function(t,dt){
+  const comp=this.el.components['hand-tracking-controls'];
+  if(!comp||!comp.getJointPosition)return;
+  const palm=comp.getJointPosition('wrist');
+  const index=comp.getJointPosition('index-finger-tip');
+  const middle=comp.getJointPosition('middle-finger-tip');
+  if(!palm||!index||!middle)return;
+
+  const dIndex=palm.distanceTo(index);
+  const dMiddle=palm.distanceTo(middle);
+
+  const indexTouch=dIndex<this.data.contactThreshold;
+  const middleTouch=dMiddle<this.data.contactThreshold;
+
+  if(indexTouch&&!this.indexPrev) this.step(index);
+  if(middleTouch&&!this.middlePrev) this.step(middle);
+
+  this.indexPrev=indexTouch; this.middlePrev=middleTouch;
+
+  const now=performance.now()/1000;
+  if(now-this.lastStep>this.data.stepTimeout){this.speed*=0.9; if(this.speed<0.01)this.speed=0;}
+
+  const rig=this.data.rig.object3D;
+  const wrist=comp.getJointPosition('wrist');
+  const mid=comp.getJointPosition('middle-finger-tip');
+  if(rig&&wrist&&mid){
+    const dir=new THREE.Vector3().subVectors(mid,wrist).normalize();
+    rig.position.addScaledVector(dir,this.speed*(dt/1000));
+  }
+
+  if(this.bar){
+    const s=this.speed/this.data.maxSpeed;
+    this.bar.object3D.scale.x=Math.max(0.01,s);
+  }
+ },
+ step:function(pos){
+  const now=performance.now()/1000;
+  this.steps.push(now);
+  if(this.steps.length>5)this.steps.shift();
+  if(this.steps.length>=2){
+    const span=this.steps[this.steps.length-1]-this.steps[0];
+    const freq=(this.steps.length-1)/span;
+    this.speed=Math.min(freq*this.data.speedGain,this.data.maxSpeed);
+  }
+  this.lastStep=now;
+
+  const ring=document.createElement('a-ring');
+  ring.setAttribute('radius-inner',0.005);
+  ring.setAttribute('radius-outer',0.02);
+  ring.setAttribute('color','#00FFFF');
+  ring.object3D.position.copy(pos);
+  ring.setAttribute('animation','property: scale; to:2 2 2; dur:300');
+  ring.setAttribute('animation__fade','property: material.opacity; to:0; dur:300');
+  this.el.sceneEl.appendChild(ring);
+  setTimeout(()=>ring.remove(),350);
+
+  const osc=this.audio.createOscillator();
+  const gain=this.audio.createGain();
+  osc.frequency.value=300+this.speed*200;
+  gain.gain.value=0.05;
+  osc.connect(gain); gain.connect(this.audio.destination);
+  osc.start(); osc.stop(this.audio.currentTime+0.05);
+ }
+});
+</script>
+</head>
+<body>
+<a-scene webxr="requiredFeatures: hand-tracking">
+
+<a-entity id="rig" position="0 1.6 0">
+ <a-camera></a-camera>
+</a-entity>
+
+<a-entity id="leftHand" hand-tracking-controls="hand:left" finger-walking="rig:#rig">
+ <a-box class="speedbar" position="0 0.05 -0.05" depth="0.01" height="0.01" width="0.1" color="#00FFAA"></a-box>
+</a-entity>
+
+<a-entity id="rightHand" hand-tracking-controls="hand:right"></a-entity>
+
+<a-plane rotation="-90 0 0" width="50" height="50" color="#222" material="shader:flat; repeat:50 50"></a-plane>
+
+<a-box position="2 1 -3" color="#4CC3D9"></a-box>
+<a-sphere position="-2 1 -5" radius="1" color="#EF2D5E"></a-sphere>
+<a-cylinder position="0 0.75 -8" radius="0.5" height="1.5" color="#FFC65D"></a-cylinder>
+
+<a-text value="Finger Walk Locomotion:\nHold palm down and tap index + middle finger like walking. Faster taps = faster movement." position="0 2 -2" align="center"></a-text>
+
+</a-scene>
+</body>
+</html>
