@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Finger Direction VR Locomotion</title>
+
+<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+
+<style>
+body { margin:0; }
+</style>
+
+<script>
+
+/* ---------------- LOCOMOTION (UNCHANGED) ---------------- */
+
+AFRAME.registerComponent("finger-locomotion",{
+
+init:function(){
+
+this.cameraRig = document.querySelector("#rig")
+this.hand = document.querySelector("#leftHand")
+this.feedback = document.querySelector("#feedback")
+
+this.speed = 0.08
+this.moving = false
+
+this.feedbackBg = document.createElement("a-plane")
+this.feedbackBg.setAttribute("position","0 -0.2 -0.61")
+this.feedbackBg.setAttribute("width","0.35")
+this.feedbackBg.setAttribute("height","0.08")
+this.feedbackBg.setAttribute("color","#111")
+this.feedbackBg.setAttribute("opacity","0.8")
+
+this.cameraRig.appendChild(this.feedbackBg)
+
+},
+
+tick:function(){
+
+if(!this.hand.components["hand-tracking-controls"]) return
+
+let indexTip = this.hand.object3D.getObjectByName("index-finger-tip")
+let indexBase = this.hand.object3D.getObjectByName("index-finger-phalanx-proximal")
+
+if(!indexTip || !indexBase) return
+
+let tipPos = new THREE.Vector3()
+let basePos = new THREE.Vector3()
+
+indexTip.getWorldPosition(tipPos)
+indexBase.getWorldPosition(basePos)
+
+let direction = tipPos.clone().sub(basePos).normalize()
+
+let strength = tipPos.distanceTo(basePos)
+
+let extended = strength > 0.04
+
+if(extended){
+
+this.moving = true
+
+let moveSpeed = this.speed * (strength * 10)
+
+let dt = this.el.sceneEl.clock.getDelta()
+
+this.cameraRig.object3D.position.x += direction.x * moveSpeed * 60 * dt
+this.cameraRig.object3D.position.z += direction.z * moveSpeed * 60 * dt
+
+let angle = Math.atan2(direction.x, direction.z)
+this.cameraRig.object3D.rotation.y = angle
+
+this.feedback.setAttribute("value","MOVING")
+this.feedback.setAttribute("color","#00ff88")
+
+this.hand.setAttribute("raycaster","lineColor: #00ff88")
+
+}else{
+
+this.moving = false
+
+this.feedback.setAttribute("value","STOPPED")
+this.feedback.setAttribute("color","#ff4444")
+
+this.hand.setAttribute("raycaster","lineColor: #ff4444")
+
+}
+
+}
+
+})
+
+/* SEARCHLIGHT */
+
+AFRAME.registerComponent("searchlight",{
+tick:function(time){
+this.el.object3D.rotation.y = Math.sin(time/1500)*45
+}
+})
+
+/* DRONES */
+
+AFRAME.registerComponent("drone",{
+tick:function(time){
+
+let t = time*0.001
+
+this.el.object3D.position.x += Math.sin(t)*0.01
+this.el.object3D.position.z += Math.cos(t)*0.01
+
+}
+})
+
+/* SKY EMBLEM */
+
+AFRAME.registerComponent("sky-emblem",{
+tick:function(){
+this.el.object3D.rotation.y += 0.002
+}
+})
+
+</script>
+
+</head>
+
+<body>
+
+<a-scene background="color:#0c1e3a">
+
+<!-- CAMERA RIG -->
+
+<a-entity id="rig" position="0 6 0" finger-locomotion>
+
+<a-camera></a-camera>
+
+<a-text
+id="feedback"
+value="STOPPED"
+position="0 -0.2 -0.6"
+align="center"
+color="#ff4444"
+width="2">
+</a-text>
+
+<!-- TUTORIAL -->
+
+<a-plane
+position="0 0 -2"
+width="1.8"
+height="1"
+color="#111"
+opacity="0.9">
+
+<a-text
+value="WELCOME DICTATOR
+
+You stand above your city.
+
+Point your LEFT index finger
+to move in that direction.
+
+Extend finger = Move
+Relax finger = Stop"
+align="center"
+width="1.6"
+color="#ff4444"
+position="0 0 0.01">
+</a-text>
+
+</a-plane>
+
+</a-entity>
+
+<!-- HANDS -->
+
+<a-entity
+id="leftHand"
+hand-tracking-controls="hand: left; modelStyle: mesh"
+raycaster="showLine:true; lineColor:#ff4444"
+line="color:#ff4444">
+</a-entity>
+
+<a-entity
+hand-tracking-controls="hand: right; modelStyle: mesh">
+</a-entity>
+
+<!-- PLATFORM -->
+
+<a-cylinder
+position="0 4.5 0"
+radius="6"
+height="1"
+color="#2b2b2b"
+metalness="0.9">
+</a-cylinder>
+
+<!-- FLOOR -->
+
+<a-plane
+rotation="-90 0 0"
+width="500"
+height="500"
+color="#14294d">
+</a-plane>
+
+<!-- CITY BUILDINGS (VARIOUS SIZES) -->
+
+<script>
+
+let scene = document.querySelector("a-scene")
+
+for(let i=0;i<200;i++){
+
+let b = document.createElement("a-box")
+
+let x = (Math.random()*400)-200
+let z = (Math.random()*400)-200
+let h = Math.random()*100 + 10
+let w = Math.random()*20 + 4
+let d = Math.random()*20 + 4
+
+b.setAttribute("position",`${x} ${h/2} ${z}`)
+b.setAttribute("width",w)
+b.setAttribute("depth",d)
+b.setAttribute("height",h)
+b.setAttribute("color","#243d6b")
+b.setAttribute("metalness","0.9")
+
+scene.appendChild(b)
+
+}
+
+</script>
+
+<!-- DICTATOR STATUE -->
+
+<a-entity position="0 15 -40">
+
+<a-cylinder height="30" radius="3" color="#3a3a3a"></a-cylinder>
+<a-sphere position="0 16 0" radius="4" color="#555"></a-sphere>
+
+</a-entity>
+
+<!-- SKY EMBLEM -->
+
+<a-entity sky-emblem position="0 120 0">
+
+<a-cylinder height="2" radius="40" color="#aa0000"></a-cylinder>
+<a-box width="10" height="60" depth="2" color="#550000"></a-box>
+<a-box width="60" height="10" depth="2" color="#550000"></a-box>
+
+</a-entity>
+
+<!-- MARCHING GREEN ARMY -->
+
+<script>
+
+let scene2 = document.querySelector("a-scene")
+
+for(let x=-20;x<=20;x+=2){
+
+for(let z=-20;z<=20;z+=2){
+
+let soldier = document.createElement("a-cylinder")
+
+soldier.setAttribute("height","0.8")
+soldier.setAttribute("radius","0.15")
+soldier.setAttribute("color","#1fa63a")
+
+soldier.setAttribute("position",`${x} 0.4 ${z}`)
+
+soldier.setAttribute("animation",
+"property: position; to: "+x+" 0.4 "+(z+3)+"; dir: alternate; loop: true; dur:2500")
+
+scene2.appendChild(soldier)
+
+}
+
+}
+
+</script>
+
+<!-- MANY PEACH CIVILIANS -->
+
+<script>
+
+let scene3 = document.querySelector("a-scene")
+
+for(let i=0;i<800;i++){
+
+let x = (Math.random()*200)-100
+let z = (Math.random()*200)-100
+
+let person = document.createElement("a-cylinder")
+
+person.setAttribute("height","0.7")
+person.setAttribute("radius","0.12")
+person.setAttribute("color","#ffcc99")
+person.setAttribute("position",`${x} 0.35 ${z}`)
+
+scene3.appendChild(person)
+
+}
+
+</script>
+
+<!-- DRONES -->
+
+<a-sphere drone position="20 15 20" radius="0.8" color="#aa0000"></a-sphere>
+<a-sphere drone position="-20 18 -10" radius="0.8" color="#aa0000"></a-sphere>
+<a-sphere drone position="30 20 -30" radius="0.8" color="#aa0000"></a-sphere>
+
+<!-- SEARCHLIGHTS -->
+
+<a-entity searchlight position="40 25 40">
+<a-cone height="50" radius-bottom="6" radius-top="0.1"
+color="#ffffff" opacity="0.2"></a-cone>
+</a-entity>
+
+<a-entity searchlight position="-40 25 -40">
+<a-cone height="50" radius-bottom="6" radius-top="0.1"
+color="#ffffff" opacity="0.2"></a-cone>
+</a-entity>
+
+<!-- LIGHTING -->
+
+<a-light type="ambient" intensity="0.9" color="#8899ff"></a-light>
+<a-light type="directional" position="10 40 20" intensity="1.2"></a-light>
+
+</a-scene>
+
+</body>
+</html>
