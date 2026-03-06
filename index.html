@@ -23,6 +23,17 @@ this.feedback = document.querySelector("#feedback")
 this.speed = 0.08
 this.moving = false
 
+/* NEW: HUD BACKGROUND PANEL */
+
+this.feedbackBg = document.createElement("a-plane")
+this.feedbackBg.setAttribute("position","0 -0.2 -0.61")
+this.feedbackBg.setAttribute("width","0.35")
+this.feedbackBg.setAttribute("height","0.08")
+this.feedbackBg.setAttribute("color","#111")
+this.feedbackBg.setAttribute("opacity","0.8")
+
+this.cameraRig.appendChild(this.feedbackBg)
+
 },
 
 tick:function(){
@@ -42,14 +53,29 @@ indexBase.getWorldPosition(basePos)
 
 let direction = tipPos.clone().sub(basePos).normalize()
 
-let extended = tipPos.distanceTo(basePos) > 0.04
+let strength = tipPos.distanceTo(basePos)
+
+let extended = strength > 0.04
 
 if(extended){
 
 this.moving = true
 
-this.cameraRig.object3D.position.x += direction.x * this.speed
-this.cameraRig.object3D.position.z += direction.z * this.speed
+/* NEW: SPEED BASED ON FINGER EXTENSION */
+
+let moveSpeed = this.speed * (strength * 10)
+
+/* NEW: FRAME RATE INDEPENDENT MOVEMENT */
+
+let dt = this.el.sceneEl.clock.getDelta()
+
+this.cameraRig.object3D.position.x += direction.x * moveSpeed * 60 * dt
+this.cameraRig.object3D.position.z += direction.z * moveSpeed * 60 * dt
+
+/* NEW: ROTATE BODY TOWARD DIRECTION */
+
+let angle = Math.atan2(direction.x, direction.z)
+this.cameraRig.object3D.rotation.y = angle
 
 this.feedback.setAttribute("value","MOVING")
 this.feedback.setAttribute("color","#00ff88")
