@@ -8,24 +8,21 @@
     <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
 
     <script>
-        // CORE LOCOMOTION SYSTEM
-        // Locomotion mechanic based entirely on WebXR hand tracking joints.
+        // CORE LOCOMOTION SYSTEM (Untouched for perfect stability)
         AFRAME.registerComponent('finger-locomotion', {
             schema: {
-                speed: { type: 'number', default: 0.18 }, // Fast glide speed as requested
-                threshold: { type: 'number', default: 0.035 }, // Distance threshold to detect extended finger
+                speed: { type: 'number', default: 0.18 },
+                threshold: { type: 'number', default: 0.035 },
                 rig: { type: 'selector', default: '#rig' }
             },
             
             init: function() {
-                // Pre-allocate vectors to avoid garbage collection stuttering
                 this.vector = new THREE.Vector3();
                 this.worldVector = new THREE.Vector3();
                 this.proximalPos = new THREE.Vector3();
                 this.tipPos = new THREE.Vector3();
                 this.arrowPos = new THREE.Vector3();
                 this.lookAtPos = new THREE.Vector3();
-                
                 this.arrow = document.querySelector('#movement-arrow');
             },
 
@@ -41,7 +38,6 @@
                 const refSpace = xr.getReferenceSpace();
                 if (!refSpace) return;
 
-                // 1. Find the left hand input source
                 let leftHandSource = null;
                 for (let i = 0; i < session.inputSources.length; i++) {
                     const source = session.inputSources[i];
@@ -56,7 +52,6 @@
                     return;
                 }
 
-                // 2. Get the required joints
                 const proximalJoint = leftHandSource.hand.get('index-finger-phalanx-proximal');
                 const tipJoint = leftHandSource.hand.get('index-finger-tip');
 
@@ -65,7 +60,6 @@
                     return;
                 }
 
-                // 3. Get joint poses in the local reference space
                 const proximalPose = frame.getJointPose(proximalJoint, refSpace);
                 const tipPose = frame.getJointPose(tipJoint, refSpace);
 
@@ -74,49 +68,33 @@
                     return;
                 }
 
-                // 4. Extract positions
                 this.proximalPos.set(proximalPose.transform.position.x, proximalPose.transform.position.y, proximalPose.transform.position.z);
                 this.tipPos.set(tipPose.transform.position.x, tipPose.transform.position.y, tipPose.transform.position.z);
 
-                // 5. Check extension threshold to prevent automatic drift
                 const distance = this.proximalPos.distanceTo(this.tipPos);
 
                 if (distance > this.data.threshold) {
-                    // Finger is extended -> Calculate direction vector
                     this.vector.subVectors(this.tipPos, this.proximalPos).normalize();
 
-                    // Apply movement to the rig
                     if (this.data.rig) {
-                        // Transform the local hand vector to world space based on the rig's rotation
                         this.worldVector.copy(this.vector);
                         this.worldVector.applyQuaternion(this.data.rig.object3D.quaternion);
                         this.worldVector.multiplyScalar(this.data.speed);
-                        
-                        // Move the camera rig
                         this.data.rig.object3D.position.add(this.worldVector);
                     }
-
-                    // Update visual feedback (Glowing Arrow)
                     this.updateArrow(this.tipPos, this.vector);
                 } else {
-                    // Finger is curled/relaxed -> strictly stop movement
                     this.stopMovement();
                 }
             },
 
             updateArrow: function(pos, dir) {
                 if (!this.arrow) return;
-                
                 if (!this.arrow.getAttribute('visible')) {
                     this.arrow.setAttribute('visible', 'true');
                 }
-
-                // Position the arrow slightly ahead of the fingertip
                 this.arrowPos.copy(pos).addScaledVector(dir, 0.15);
                 this.arrow.object3D.position.copy(this.arrowPos);
-
-                // Orient the arrow to point in the direction of movement
-                // lookAt makes the local -Z axis point at the target
                 this.lookAtPos.copy(this.arrowPos).add(dir);
                 this.arrow.object3D.lookAt(this.lookAtPos);
             },
@@ -125,109 +103,165 @@
                 if (this.arrow && this.arrow.getAttribute('visible')) {
                     this.arrow.setAttribute('visible', 'false');
                 }
-                // No translation applied to the rig, guaranteeing zero automatic drift
             }
         });
 
-        // PROCEDURAL CITY GENERATION SYSTEM
+        // PROCEDURAL CITY GENERATION SYSTEM (Upgraded for Density and Complexity)
         AFRAME.registerComponent('city-generator', {
             init: function() {
                 const scene = this.el;
 
-                // 1. Generate Brutalist Megacity Buildings
-                const buildingCount = 140;
+                // 1. Generate Complex Brutalist Megacity Buildings
+                const buildingCount = 280; // High density
                 for (let i = 0; i < buildingCount; i++) {
-                    const box = document.createElement('a-box');
+                    let x = (Math.random() - 0.5) * 700;
+                    let z = (Math.random() - 0.5) * 700;
                     
-                    let x = (Math.random() - 0.5) * 500;
-                    let z = (Math.random() - 0.5) * 500;
-                    
-                    // Keep the central plaza area clear
-                    if (Math.abs(x) < 80 && Math.abs(z - 20) < 80) {
+                    // Keep the central plaza area completely clear
+                    if (Math.abs(x) < 70 && z > -50 && z < 90) {
                         x += x > 0 ? 80 : -80;
-                        z += z > 0 ? 80 : -80;
                     }
 
-                    const width = 10 + Math.random() * 25;
-                    const depth = 10 + Math.random() * 25;
-                    const height = 10 + Math.random() * 80; // Heights between 10 and 90
+                    const buildingGroup = document.createElement('a-entity');
+                    buildingGroup.setAttribute('position', `${x} 0 ${z}`);
 
-                    // Color palette: Brutalist metallic dark blue-gray with slight variations
-                    const h = Math.floor(210 + Math.random() * 20); // Hue around 220
-                    const s = Math.floor(10 + Math.random() * 15);  // Low saturation
-                    const l = Math.floor(12 + Math.random() * 12);  // Dark lightness
+                    // Base tower height (taller to make it feel like a megacity)
+                    const baseHeight = 30 + Math.random() * 150;
+                    const baseWidth = 12 + Math.random() * 25;
+                    const baseDepth = 12 + Math.random() * 25;
 
-                    box.setAttribute('position', `${x} ${height / 2} ${z}`);
-                    box.setAttribute('width', width);
-                    box.setAttribute('height', height);
-                    box.setAttribute('depth', depth);
-                    box.setAttribute('color', `hsl(${h}, ${s}%, ${l}%)`);
-                    box.setAttribute('material', 'roughness: 0.8; metalness: 0.3');
-                    
-                    scene.appendChild(box);
+                    // Color palette: Brutalist metallic dark blue-gray
+                    const h = Math.floor(210 + Math.random() * 20);
+                    const s = Math.floor(10 + Math.random() * 15);
+                    const l = Math.floor(10 + Math.random() * 15);
+                    const bColor = `hsl(${h}, ${s}%, ${l}%)`;
+                    const materialStr = 'roughness: 0.85; metalness: 0.4';
+
+                    // Main Shaft
+                    const mainBox = document.createElement('a-box');
+                    mainBox.setAttribute('position', `0 ${baseHeight / 2} 0`);
+                    mainBox.setAttribute('width', baseWidth);
+                    mainBox.setAttribute('height', baseHeight);
+                    mainBox.setAttribute('depth', baseDepth);
+                    mainBox.setAttribute('color', bColor);
+                    mainBox.setAttribute('material', materialStr);
+                    buildingGroup.appendChild(mainBox);
+
+                    // Greebling (Add 2 to 5 attached blocks/shapes to make it complex)
+                    const blockCount = Math.floor(Math.random() * 4) + 2;
+                    for (let j = 0; j < blockCount; j++) {
+                        const isCylinder = Math.random() > 0.8; // Occasional cylindrical silos
+                        const shape = document.createElement(isCylinder ? 'a-cylinder' : 'a-box');
+                        
+                        const bWidth = baseWidth * (0.4 + Math.random() * 0.8);
+                        const bDepth = baseDepth * (0.4 + Math.random() * 0.8);
+                        const bHeight = baseHeight * (0.1 + Math.random() * 0.8);
+                        
+                        const bX = (Math.random() - 0.5) * baseWidth * 1.5;
+                        const bY = bHeight / 2 + Math.random() * (baseHeight - bHeight);
+                        const bZ = (Math.random() - 0.5) * baseDepth * 1.5;
+
+                        shape.setAttribute('position', `${bX} ${bY} ${bZ}`);
+                        shape.setAttribute('color', `hsl(${h}, ${s}%, ${l + (Math.random() * 5 - 2)}%)`);
+                        shape.setAttribute('material', materialStr);
+                        
+                        if (isCylinder) {
+                            shape.setAttribute('radius', bWidth / 2);
+                            shape.setAttribute('height', bHeight);
+                        } else {
+                            shape.setAttribute('width', bWidth);
+                            shape.setAttribute('height', bHeight);
+                            shape.setAttribute('depth', bDepth);
+                        }
+                        buildingGroup.appendChild(shape);
+                    }
+
+                    // Dystopian Elements: Industrial Pipes / Antennas
+                    if (Math.random() > 0.6) {
+                        const antenna = document.createElement('a-cylinder');
+                        antenna.setAttribute('position', `${(Math.random() - 0.5) * baseWidth} ${baseHeight + 10} ${(Math.random() - 0.5) * baseDepth}`);
+                        antenna.setAttribute('radius', '0.5');
+                        antenna.setAttribute('height', '20');
+                        antenna.setAttribute('color', '#111');
+                        buildingGroup.appendChild(antenna);
+                    }
+
+                    // Dystopian Elements: Neon Accents / Warning Lights
+                    if (Math.random() > 0.7) {
+                        const neon = document.createElement('a-box');
+                        const isVertical = Math.random() > 0.5;
+                        const neonColor = Math.random() > 0.5 ? '#ff2a2a' : '#2a2aff';
+                        
+                        neon.setAttribute('position', `${(Math.random() > 0.5 ? 1 : -1) * (baseWidth/2 + 0.5)} ${baseHeight * Math.random()} 0`);
+                        neon.setAttribute('width', isVertical ? '0.5' : baseWidth * 0.8);
+                        neon.setAttribute('height', isVertical ? baseHeight * 0.3 : '0.5');
+                        neon.setAttribute('depth', isVertical ? baseDepth * 0.8 : '0.5');
+                        neon.setAttribute('color', neonColor);
+                        neon.setAttribute('material', 'shader: flat'); // Flat shader makes it look glowing
+                        buildingGroup.appendChild(neon);
+                    }
+
+                    scene.appendChild(buildingGroup);
                 }
 
-                // 2. Build the Massive Dictator Statue (at Z = -10)
-                const buildStatuePart = (w, h, d, y, z) => {
+                // 2. Build the Massive Dictator Statue (at Z = -15)
+                const buildStatuePart = (w, h, d, y, z, color, isFlat) => {
                     const part = document.createElement('a-box');
                     part.setAttribute('width', w);
                     part.setAttribute('height', h);
                     part.setAttribute('depth', d);
                     part.setAttribute('position', `0 ${y} ${z}`);
-                    part.setAttribute('color', '#15181e');
-                    part.setAttribute('material', 'roughness: 0.9; metalness: 0.5');
+                    part.setAttribute('color', color || '#11141a');
+                    part.setAttribute('material', isFlat ? 'shader: flat' : 'roughness: 0.9; metalness: 0.6');
                     scene.appendChild(part);
                 };
                 
-                buildStatuePart(16, 6, 16, 3, -10);   // Base
-                buildStatuePart(10, 24, 10, 18, -10); // Body
-                buildStatuePart(18, 6, 8, 30, -10);   // Shoulders
-                buildStatuePart(6, 8, 6, 37, -10);    // Head
+                buildStatuePart(20, 8, 20, 4, -15);    // Base
+                buildStatuePart(12, 35, 12, 25, -15);  // Body
+                buildStatuePart(22, 8, 10, 45, -15);   // Shoulders
+                buildStatuePart(8, 10, 8, 55, -15);    // Head
+                buildStatuePart(6, 2, 2, 56, -11, '#ff1111', true); // Glowing red visor/eyes
 
-                // 3. Generate Soldier Grid (200 soldiers)
-                // Arranged tightly between the statue and the platform
-                for (let row = 0; row < 10; row++) {
-                    for (let col = 0; col < 20; col++) {
+                // 3. Generate Soldier Grid (More dense, menacing)
+                for (let row = 0; row < 12; row++) {
+                    for (let col = 0; col < 25; col++) {
                         const soldier = document.createElement('a-box');
-                        const sx = -19 + col * 2;
-                        const sz = 5 + row * 1.5;
+                        const sx = -24 + col * 2;
+                        const sz = 8 + row * 1.5;
                         
-                        soldier.setAttribute('position', `${sx} 0.8 ${sz}`);
-                        soldier.setAttribute('width', '0.6');
-                        soldier.setAttribute('height', '1.6');
-                        soldier.setAttribute('depth', '0.6');
-                        soldier.setAttribute('color', '#2a4d25'); // Green colored simple humanoid shape
-                        soldier.setAttribute('material', 'roughness: 0.9');
+                        soldier.setAttribute('position', `${sx} 0.9 ${sz}`);
+                        soldier.setAttribute('width', '0.7');
+                        soldier.setAttribute('height', '1.8');
+                        soldier.setAttribute('depth', '0.7');
+                        soldier.setAttribute('color', '#1a3318'); // Darker metallic green
+                        soldier.setAttribute('material', 'roughness: 0.6; metalness: 0.5');
                         scene.appendChild(soldier);
                     }
                 }
 
-                // 4. Generate Random Civilians (180 civilians)
+                // 4. Generate Random Civilians
                 let civCount = 0;
-                while (civCount < 180) {
-                    const cx = (Math.random() - 0.5) * 120;
-                    const cz = (Math.random() - 0.5) * 120 + 20;
+                while (civCount < 200) {
+                    const cx = (Math.random() - 0.5) * 140;
+                    const cz = (Math.random() - 0.5) * 140 + 20;
                     
-                    // Keep civilians out of the soldier grid zone and off the platform
-                    const inSoldierZone = (cx > -22 && cx < 22 && cz > 2 && cz < 22);
-                    const onPlatform = (cx > -20 && cx < 20 && cz > 18 && cz < 62);
+                    const inSoldierZone = (cx > -28 && cx < 28 && cz > 5 && cz < 28);
+                    const onPlatform = (cx > -25 && cx < 25 && cz > 18 && cz < 62);
                     
                     if (!inSoldierZone && !onPlatform) {
                         const civilian = document.createElement('a-entity');
                         civilian.setAttribute('position', `${cx} 0 ${cz}`);
 
-                        // Body
                         const body = document.createElement('a-cylinder');
                         body.setAttribute('radius', '0.25');
                         body.setAttribute('height', '1.3');
                         body.setAttribute('position', '0 0.65 0');
-                        body.setAttribute('color', '#2b2d35');
+                        body.setAttribute('color', '#22252e');
                         
-                        // Head (Peach colored sphere)
                         const head = document.createElement('a-sphere');
                         head.setAttribute('radius', '0.2');
                         head.setAttribute('position', '0 1.5 0');
-                        head.setAttribute('color', '#ffcca8');
+                        head.setAttribute('color', '#dca98e');
 
                         civilian.appendChild(body);
                         civilian.appendChild(head);
@@ -236,34 +270,75 @@
                         civCount++;
                     }
                 }
+
+                // 5. Add Security Drones Hovering over the Plaza
+                for(let k=0; k<20; k++) {
+                    const dx = (Math.random() - 0.5) * 150;
+                    const dy = 15 + Math.random() * 30;
+                    const dz = (Math.random() - 0.5) * 150;
+
+                    const drone = document.createElement('a-entity');
+                    drone.setAttribute('position', `${dx} ${dy} ${dz}`);
+
+                    const dBody = document.createElement('a-box');
+                    dBody.setAttribute('width', '1.5');
+                    dBody.setAttribute('height', '1');
+                    dBody.setAttribute('depth', '1.5');
+                    dBody.setAttribute('color', '#0a0a0a');
+
+                    const dLight = document.createElement('a-cone');
+                    dLight.setAttribute('radius-bottom', '4');
+                    dLight.setAttribute('radius-top', '0.1');
+                    dLight.setAttribute('height', '10');
+                    dLight.setAttribute('position', '0 -5 0');
+                    dLight.setAttribute('material', 'color: #ff2222; shader: flat; transparent: true; opacity: 0.15');
+
+                    drone.appendChild(dBody);
+                    drone.appendChild(dLight);
+                    scene.appendChild(drone);
+                }
+
+                // 6. Propaganda Holograms
+                const words = ["OBEY", "WORK", "REPORT", "ORDER", "STATE"];
+                for(let h=0; h<8; h++) {
+                    const text = document.createElement('a-text');
+                    const tx = (Math.random() - 0.5) * 200;
+                    const ty = 40 + Math.random() * 60;
+                    const tz = (Math.random() - 0.5) * 200;
+                    
+                    text.setAttribute('position', `${tx} ${ty} ${tz}`);
+                    text.setAttribute('value', words[Math.floor(Math.random() * words.length)]);
+                    text.setAttribute('color', '#ff3333');
+                    text.setAttribute('scale', '40 40 40');
+                    text.setAttribute('align', 'center');
+                    // Point somewhat towards the central area
+                    text.setAttribute('look-at', '0 10 40');
+                    scene.appendChild(text);
+                }
             }
         });
     </script>
 </head>
 <body>
-    <!-- Main Scene: Applies fog for red atmospheric haze and attaches the locomotion and generator -->
+    <!-- Main Scene: Applies fog for red atmospheric haze -->
     <a-scene 
         finger-locomotion 
         city-generator 
-        fog="type: exponential; color: #5a1015; density: 0.009"
-        background="color: #050a14">
+        fog="type: exponential; color: #4a080c; density: 0.008"
+        background="color: #03060c">
         
-        <!-- Environment Lighting (Dawn) -->
-        <a-light type="ambient" color="#1a2035" intensity="0.8"></a-light>
-        <a-light type="directional" color="#ff4422" position="-1 0.2 -1" intensity="1.5"></a-light>
-
-        <!-- The Sky -->
-        <a-sky color="#050a14"></a-sky>
+        <!-- Environment Lighting (Dawn / Dark Authoritarian) -->
+        <a-light type="ambient" color="#12182b" intensity="0.9"></a-light>
+        <a-light type="directional" color="#ff3311" position="-1 0.1 -0.5" intensity="1.8"></a-light>
 
         <!-- Ground Plane -->
-        <a-plane rotation="-90 0 0" width="1000" height="1000" color="#0a0c11" material="roughness: 1; metalness: 0"></a-plane>
+        <a-plane rotation="-90 0 0" width="1200" height="1200" color="#080a0f" material="roughness: 1; metalness: 0.1"></a-plane>
 
         <!-- Dictator Platform (40x40 units, highly elevated) -->
-        <!-- Positioned so that the top surface is at Y=10 -->
-        <a-box position="0 5 40" width="40" height="10" depth="40" color="#1c202a" material="roughness: 0.9; metalness: 0.2"></a-box>
+        <a-box position="0 5 40" width="40" height="10" depth="40" color="#181b24" material="roughness: 0.9; metalness: 0.3"></a-box>
 
         <!-- PLAYER RIG -->
-        <!-- Placed exactly 10 units above ground, matching the platform's top edge, looking over the crowd -->
+        <!-- Placed exactly 10 units above ground, matching the platform's top edge -->
         <a-entity id="rig" position="0 10.1 40">
             <!-- Camera -->
             <a-camera position="0 1.6 0" look-controls="pointerLockEnabled: false"></a-camera>
@@ -272,12 +347,11 @@
             <a-entity hand-tracking-controls="hand: left; modelStyle: mesh; modelColor: #050505;"></a-entity>
 
             <!-- Visual Feedback: Glowing Movement Arrow -->
-            <!-- Invisible by default. Positioned locally relative to the rig, managed by the locomotion script -->
             <a-entity id="movement-arrow" visible="false">
-                <!-- Arrow Tip (Cone pointing to local -Z) -->
+                <!-- Arrow Tip -->
                 <a-cone radius-bottom="0.015" radius-top="0" height="0.06" rotation="-90 0 0" position="0 0 -0.03" 
                         material="color: #ff2222; shader: flat; transparent: true; opacity: 0.9"></a-cone>
-                <!-- Arrow Shaft (Cylinder pointing to local -Z) -->
+                <!-- Arrow Shaft -->
                 <a-cylinder radius="0.005" height="0.08" rotation="-90 0 0" position="0 0 0.04" 
                             material="color: #ff2222; shader: flat; transparent: true; opacity: 0.9"></a-cylinder>
             </a-entity>
